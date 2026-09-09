@@ -197,8 +197,18 @@ def test_plain_payload_is_left_alone():
 # stays alive.
 
 
-def test_local_mode_signs_out(client):
-    r = client.get("/logout", follow_redirects=False)
+def test_local_mode_signs_out():
+    """Its own client, deliberately.
+
+    Signing out mutates the caller's cookie jar, and this used to run against
+    the module-scoped fixture: every test declared after it then ran
+    unauthenticated and failed for a reason that had nothing to do with what it
+    was checking. A test that changes shared state has to bring its own.
+    """
+    c = TestClient(app)
+    c.post("/login", data={"email": "t@example.org", "password": "pw"},
+           follow_redirects=False)
+    r = c.get("/logout", follow_redirects=False)
     assert r.status_code == 303
     assert "session" in r.headers.get("set-cookie", "")
 
@@ -370,3 +380,25 @@ def test_check_diagram_reports_a_label_that_will_not_fit():
     out = mcp_app.check_diagram(xml=tight)
     kinds = [f["kind"] for f in out["findings"]]
     assert "label_overflow" in kinds
+
+
+def test_lock_reports_the_same_revision_the_save_returned(client, diagram_id):
+    """The invariant the open editor leans on.
+
+    The page decides "did this document move?" by comparing the revision a lock
+    refresh reports against the one its own last save returned. If those two
+    numbers could drift apart, every refresh would look like somebody else's
+    change — which is the shape of the bug that put a "changed elsewhere" banner
+    on a diagram nobody else had touched.
+    """
+    base = f"/api/d/{diagram_id}"
+    saved = client.post(base + "/save", json={"session": "s1", "xml": XML_A}).json()
+    lock = client.post(base + "/lock", json={"session": "s1"}).json()
+    assert lock["revision"] == saved["revision"]
+
+
+def test_every_write_moves_the_revision_exactly_once(client, diagram_id):
+    base = f"/api/d/{diagram_id}"
+    a = client.post(base + "/save", json={"session": "s1", "xml": XML_A}).json()["revision"]
+    b = client.post(base + "/save", json={"session": "s1", "xml": XML_B}).json()["revision"]
+    assert b == a + 1

@@ -28,6 +28,9 @@
   // a lock refresh, a save -- is a chance to notice the document moved under
   // us, which is what happens when the same person edits it from a script.
   let revision = cfg.revision || 0;
+  // How many saves of ours are in flight. Non-zero means the revision on the
+  // server is ahead of what we know for a reason we caused.
+  let pendingSaves = 0;
   let banner = document.getElementById("moved-banner");
 
   function say(el, text, cls) {
@@ -78,6 +81,13 @@
 
   function noticed(serverRevision) {
     if (typeof serverRevision !== "number" || serverRevision <= revision) return;
+    // A save of our own that has not come back yet has already moved the
+    // revision on the server, so any other answer arriving in the meantime
+    // reports a change we caused. Without this guard the page announces its own
+    // writing as somebody else's: opening a fresh diagram was enough, because
+    // the editor autosaves right after loading and the lock refresh overtook
+    // the save it raced.
+    if (pendingSaves > 0) return;
     // Somebody else wrote. With nothing unsaved this is not a decision worth
     // interrupting anyone for -- take theirs. With unsaved work it is, so ask.
     if (!dirty) {
@@ -102,6 +112,7 @@
     if (xml === lastSent) return; // the editor re-emits identical states often
     lastSent = xml;
     say(statusEl, cfg.strings.saving, "");
+    pendingSaves++;
     try {
       const out = await api("/save", { xml: xml });
       if (out.error === "diagram_too_large") {
@@ -118,15 +129,25 @@
           "warn"
         );
         paintLock({ held: false, held_by_other: true, label: out.holder });
+        // Refused, but the revision the server reports is still news to us.
+        if (typeof out.revision === "number") {
+          revision = Math.max(revision, out.revision);
+        }
         return;
       }
       dirty = false;
-      if (typeof out.revision === "number") revision = out.revision;
+      // Highest wins: two saves can be in flight at once, and their answers do
+      // not have to arrive in the order they were sent.
+      if (typeof out.revision === "number") {
+        revision = Math.max(revision, out.revision);
+      }
       say(statusEl, cfg.strings.saved, "ok");
       post({ action: "export", format: "png", spinKey: "export" });
     } catch (e) {
       say(statusEl, "…", "warn");
       lastSent = null;
+    } finally {
+      pendingSaves--;
     }
   }
 
