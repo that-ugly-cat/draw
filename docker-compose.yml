@@ -1,0 +1,44 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: draw
+    restart: unless-stopped
+    # 127.0.0.1 and never 0.0.0.0: for an app behind the gate that would not be
+    # an exposure, it would be a way around authentication.
+    ports:
+      - "127.0.0.1:8023:8023"
+    env_file:
+      - .env
+    # The box is 4 GB and 2 CPU in total, and it holds twenty-odd containers.
+    mem_limit: 300m
+    volumes:
+      - ./data:/app/data
+
+  # The draw.io web app, unmodified.
+  #
+  # The tag is pinned and must stay pinned: the embed protocol is stable but it
+  # is not a versioned contract, and an update that changes how `autosave` or
+  # `export` behave has to be tried before it is suffered. `latest` would make
+  # that a surprise instead of a decision.
+  #
+  # Published on 127.0.0.1 because Caddy runs on the host and proxies /editor/*
+  # straight here. It holds no data and talks to nothing: XML reaches it over
+  # postMessage from the page, and nothing crosses in the other direction.
+  editor:
+    # Verified against the registry on 8 Sept 2026: 31.4.4 was the newest
+    # release tag. Bump it deliberately, after trying autosave and export
+    # against the new one — never by writing `latest` here.
+    image: jgraph/drawio:31.4.4
+    container_name: draw-editor
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8024:8080"
+    environment:
+      # No telemetry, no third-party storage buttons: the only storage this
+      # deployment has is the app around it.
+      DRAWIO_BASE_URL: https://draw.borant.eu/editor
+      DRAWIO_VIEWER_URL: https://draw.borant.eu/editor/js/viewer.min.js
+      DRAWIO_SELF_CONTAINED: "1"
+    mem_limit: 512m

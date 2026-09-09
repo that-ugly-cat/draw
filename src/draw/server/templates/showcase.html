@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{#
+  The showcase never looks at who is reading it. Identity headers are stripped
+  on the public branch, so a `{% raw %}{% if user %}{% endraw %}` here would be
+  always false with the gate and sometimes true without it — the same page with
+  two behaviours. Not looking, it is identical in both modes, and one button
+  covers all four cases: gated or standalone, already signed in or not.
+
+  The button points at /app, which is gated, and never at /login.
+#}
+{% block body %}
+<div class="container">
+  <h1>{{ t('tagline') }}</h1>
+  <p class="lead">{{ t('showcase_lead') }}</p>
+  <p><a class="btn btn-primary" href="/app">{{ t('enter') }}</a></p>
+</div>
+{% endblock %}

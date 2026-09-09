@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="container">
+  <div class="card" style="max-width:420px">
+    {% if gateway %}
+      {#
+        In gateway mode this page does not offer a form and does not bounce to
+        the root. The root is public, so forward_auth never fires there: an app
+        that sends people from /login to / and back builds a ring that survives
+        testing, because tests run locally where the gate is not in front.
+        The way out is a link *into* the gated prefix.
+      #}
+      <h1>{{ t('app_name') }}</h1>
+      <p class="lead">{{ t('showcase_lead') }}</p>
+      <p><a class="btn btn-primary" href="/app">{{ t('enter') }}</a></p>
+    {% else %}
+      <h1>{{ t('enter') }}</h1>
+      {% if failed %}<div class="flash">{{ t('err_not_found') }}</div>{% endif %}
+      <form method="post" action="/login">
+        <p><input type="email" name="email" placeholder="email" required style="width:100%"></p>
+        <p><input type="password" name="password" placeholder="password" required style="width:100%"></p>
+        <p><button class="btn btn-primary" type="submit">{{ t('enter') }}</button></p>
+      </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

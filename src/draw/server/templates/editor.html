@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ d.title }} · {{ t('app_name') }}{% endblock %}
+{% block body %}
+<div class="editor-shell">
+  <div class="editor-bar">
+    <span class="name">{{ d.title }}</span>
+    {% if mode == 'ro' %}<span class="badge">{{ t('read_only') }}</span>{% endif %}
+    <span id="lock-status" class="badge"></span>
+    <span id="save-status" class="badge"></span>
+    <button id="take-over" class="btn btn-small" hidden>{{ t('take_over') }}</button>
+    <span style="flex:1"></span>
+    {% if user %}
+      <a class="btn btn-small" href="/app/d/{{ d.id }}/versions">{{ t('versions') }}</a>
+      <a class="btn btn-small" href="/app/d/{{ d.id }}/links">{{ t('share') }}</a>
+      <a class="btn btn-small" href="/app">{{ t('workspace') }}</a>
+    {% elif guest_label %}
+      <span class="muted">{{ guest_label }}</span>
+    {% endif %}
+  </div>
+
+  {#
+    The editor is served from the same host under /editor/, so the iframe is
+    same-origin and no whitelist of origins has to be kept aligned. It never
+    sees the database: XML goes in and comes out over postMessage, and nothing
+    else crosses.
+
+    ui=dark because the house palette is dark and the editor's default is not;
+    left alone it is a white patch inside a dark app.
+  #}
+  <iframe id="editor-frame" title="{{ d.title }}"
+          src="{{ editor_url }}?embed=1&proto=json&spin=1&libraries=1&noExitBtn=1&ui=dark{% if mode == 'ro' %}&chrome=0{% endif %}"></iframe>
+</div>
+
+<script>
+window.DRAW = {
+  apiBase: {{ api_base | tojson }},
+  thumbUrl: {{ ('/api/d/' ~ d.id ~ '/thumb') | tojson }},
+  mode: {{ mode | tojson }},
+  xml: {{ d.xml | tojson }},
+  lockRefresh: {{ lock.expires_at and 30 or 30 }},
+  lock: {
+    held: false,
+    held_by_other: {{ lock.held_by_other | tojson }},
+    label: {{ lock.label | tojson }}
+  },
+  strings: {
+    saved: {{ t('saved') | tojson }},
+    saving: {{ t('saving') | tojson }},
+    saveOrphan: {{ t('save_orphan', who='{who}', n='{n}') | tojson }},
+    lockFree: {{ t('lock_free') | tojson }},
+    lockYours: {{ t('lock_yours') | tojson }},
+    lockOther: {{ t('lock_other', who='{who}') | tojson }},
+    takeOverWarn: {{ t('take_over_warn') | tojson }}
+  }
+};
+</script>
+<script src="/static/js/editor.js?v={{ asset_v | default('0.1.0') }}"></script>
+{% endblock %}

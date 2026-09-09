@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ t('workspace') }} · {{ t('app_name') }}{% endblock %}
+{% block body %}
+<div class="container wide">
+
+  <form method="post" action="/app/new" style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap">
+    <input type="text" name="title" placeholder="{{ t('untitled') }}" style="flex:1;min-width:200px">
+    <button class="btn btn-primary" type="submit">{{ t('new_diagram') }}</button>
+  </form>
+
+  {% if not diagrams %}
+    <div class="card"><p class="muted" style="margin:0">{{ t('empty_workspace') }}</p></div>
+  {% endif %}
+
+  <div class="grid">
+    {% for d in diagrams %}
+    <div class="card tile">
+      <a href="/app/d/{{ d.id }}" class="thumb" style="background-image:url('/app/d/{{ d.id }}/thumb.png')" aria-label="{{ d.title }}"></a>
+      <div class="title"><a href="/app/d/{{ d.id }}">{{ d.title }}</a></div>
+      <div class="muted">{{ t('updated') }} {{ fmt(d.updated_at) }}{% if d.updated_by_label %} · {{ t('by') }} {{ d.updated_by_label }}{% endif %}</div>
+      <div class="row">
+        {% set st = lock_state[d.id] %}
+        {% if st.held_by_other %}<span class="badge warn">{{ t('lock_other', who=st.label) }}</span>{% endif %}
+        {% if share_counts[d.id] %}<span class="badge">{{ t('share') }} · {{ share_counts[d.id] }}</span>{% endif %}
+        <span class="spacer" style="flex:1"></span>
+        <a class="btn btn-small" href="/app/d/{{ d.id }}/links">{{ t('share') }}</a>
+        <a class="btn btn-small" href="/app/d/{{ d.id }}/versions">{{ t('versions') }}</a>
+        <form method="post" action="/app/d/{{ d.id }}/delete" style="display:inline">
+          <button class="btn btn-small btn-danger" type="submit">{{ t('delete') }}</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if binned %}
+  <h2>{{ t('bin') }}</h2>
+  <div class="card table-wrap">
+    <table class="table">
+      <tbody>
+      {% for d in binned %}
+        <tr>
+          <td>{{ d.title }}</td>
+          <td class="muted">{{ fmt(d.deleted_at) }}</td>
+          <td style="text-align:right">
+            <form method="post" action="/app/d/{{ d.id }}/restore" style="display:inline">
+              <button class="btn btn-small" type="submit">{{ t('restore') }}</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

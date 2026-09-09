@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ t('versions') }} · {{ d.title }}{% endblock %}
+{% block body %}
+<div class="container">
+  <h1>{{ t('versions') }}</h1>
+  <p class="lead">{{ d.title }} · <a href="/app/d/{{ d.id }}">{{ t('open') }}</a> · <a href="/app">{{ t('workspace') }}</a></p>
+
+  <div class="card table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>#</th><th>{{ t('updated') }}</th><th>{{ t('by') }}</th><th></th><th></th></tr>
+      </thead>
+      <tbody>
+      {% for v in versions %}
+        <tr>
+          <td>{{ v.version_no }}</td>
+          <td>{{ fmt(v.created_at) }}</td>
+          <td>{{ v.author_label or '—' }}</td>
+          <td>
+            {% if v.pinned %}<span class="badge ok">{{ t('pinned') }}</span>{% endif %}
+            {% if v.orphan %}
+              {# Never discarded: a save that arrived without a valid lock is
+                 parked here with the reason, and it is the thing that makes the
+                 worst case a merge by hand instead of an hour lost. #}
+              <span class="badge warn" title="{{ t('orphan_hint') }}">{{ t('orphan') }}</span>
+              <div class="muted">{{ v.orphan_reason }}</div>
+            {% endif %}
+          </td>
+          <td style="text-align:right;white-space:nowrap">
+            <a class="btn btn-small" href="/app/d/{{ d.id }}/versions/{{ v.id }}/raw">.drawio</a>
+            <form method="post" action="/app/d/{{ d.id }}/versions/{{ v.id }}/pin" style="display:inline">
+              <button class="btn btn-small" type="submit">{{ v.pinned and t('unpin') or t('pin') }}</button>
+            </form>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="muted">—</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

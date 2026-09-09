@@ -1,0 +1,157 @@
+/*
+ * The bridge between this app and the draw.io iframe.
+ *
+ * The whole integration is here, and it is small on purpose: the editor is a
+ * component that receives XML and returns XML, and everything that decides
+ * anything — who holds the lock, what becomes a version, what happens to a save
+ * that arrives too late — lives on the server.
+ *
+ * The session id is generated per page load rather than stored in a cookie, and
+ * that is the point: the lock is keyed on a session, so the same person in two
+ * tabs is two holders and sees the conflict.
+ */
+(function () {
+  const cfg = window.DRAW;
+  const frame = document.getElementById("editor-frame");
+  const statusEl = document.getElementById("save-status");
+  const lockEl = document.getElementById("lock-status");
+  const takeoverBtn = document.getElementById("take-over");
+
+  const session = (crypto.randomUUID && crypto.randomUUID()) ||
+    String(Date.now()) + Math.random().toString(36).slice(2);
+
+  let ready = false;
+  let dirty = false;
+  let lastSent = null;
+
+  function say(el, text, cls) {
+    if (!el) return;
+    el.textContent = text;
+    el.className = "badge" + (cls ? " " + cls : "");
+  }
+
+  function post(msg) {
+    frame.contentWindow.postMessage(JSON.stringify(msg), "*");
+  }
+
+  async function api(path, body) {
+    const res = await fetch(cfg.apiBase + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({ session: session }, body || {})),
+    });
+    if (!res.ok && res.status !== 413) throw new Error(String(res.status));
+    return res.json();
+  }
+
+  function paintLock(state) {
+    if (!lockEl) return;
+    if (state.held) {
+      say(lockEl, cfg.strings.lockYours, "ok");
+      if (takeoverBtn) takeoverBtn.hidden = true;
+    } else if (state.held_by_other) {
+      say(lockEl, cfg.strings.lockOther.replace("{who}", state.label || "?"), "warn");
+      if (takeoverBtn) takeoverBtn.hidden = false;
+    } else {
+      say(lockEl, cfg.strings.lockFree, "");
+      if (takeoverBtn) takeoverBtn.hidden = true;
+    }
+  }
+
+  async function takeLock(steal) {
+    try {
+      paintLock(await api("/lock", { steal: !!steal }));
+    } catch (e) {
+      /* A failed refresh is not worth interrupting anyone over: the save path
+         reports the truth, and an orphan version is not a lost one. */
+    }
+  }
+
+  async function save(xml) {
+    if (xml === lastSent) return; // the editor re-emits identical states often
+    lastSent = xml;
+    say(statusEl, cfg.strings.saving, "");
+    try {
+      const out = await api("/save", { xml: xml });
+      if (out.error === "diagram_too_large") {
+        say(statusEl, out.message, "danger");
+        lastSent = null; // let the next attempt through once it shrinks
+        return;
+      }
+      if (out.ok === false && out.reason === "lock_held") {
+        say(
+          statusEl,
+          cfg.strings.saveOrphan
+            .replace("{who}", out.holder || "?")
+            .replace("{n}", out.version),
+          "warn"
+        );
+        paintLock({ held: false, held_by_other: true, label: out.holder });
+        return;
+      }
+      dirty = false;
+      say(statusEl, cfg.strings.saved, "ok");
+      post({ action: "export", format: "png", spinKey: "export" });
+    } catch (e) {
+      say(statusEl, "…", "warn");
+      lastSent = null;
+    }
+  }
+
+  window.addEventListener("message", function (evt) {
+    if (evt.source !== frame.contentWindow) return;
+    let msg;
+    try {
+      msg = JSON.parse(evt.data);
+    } catch (e) {
+      return;
+    }
+
+    if (msg.event === "init") {
+      ready = true;
+      post({ action: "load", xml: cfg.xml, autosave: cfg.mode === "rw" ? 1 : 0 });
+      if (cfg.mode === "rw") takeLock(false);
+      return;
+    }
+
+    if (msg.event === "autosave" || msg.event === "save") {
+      if (cfg.mode !== "rw") return;
+      dirty = true;
+      save(msg.xml);
+      return;
+    }
+
+    if (msg.event === "export" && msg.data) {
+      fetch(cfg.thumbUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ png: msg.data }),
+      }).catch(function () {});
+    }
+  });
+
+  if (cfg.mode === "rw") {
+    setInterval(function () {
+      if (ready) takeLock(false);
+    }, cfg.lockRefresh * 1000);
+
+    window.addEventListener("beforeunload", function () {
+      // Best effort; if it does not land the lock expires on its own in 90s.
+      navigator.sendBeacon &&
+        navigator.sendBeacon(
+          cfg.apiBase + "/unlock",
+          new Blob([JSON.stringify({ session: session })], {
+            type: "application/json",
+          })
+        );
+    });
+  }
+
+  if (takeoverBtn) {
+    takeoverBtn.addEventListener("click", function () {
+      if (confirm(cfg.strings.takeOverWarn)) takeLock(true);
+    });
+  }
+
+  paintLock(cfg.lock);
+})();

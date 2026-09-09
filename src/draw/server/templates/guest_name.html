@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}{{ d.title }} · {{ t('app_name') }}{% endblock %}
+{% block body %}
+<div class="container">
+  <div class="card" style="max-width:460px">
+    <h1>{{ d.title }}</h1>
+    <p class="lead">{{ t('guest_name_ask') }}</p>
+    <form method="post" action="/s/{{ token }}/name" style="display:flex;gap:8px">
+      <input type="text" name="name" required maxlength="60" style="flex:1" autofocus>
+      <button class="btn btn-primary" type="submit">{{ t('continue') }}</button>
+    </form>
+    {#
+      A label, not an identity, and the page says so rather than letting the
+      form imply otherwise. It is used to show who holds the lock and to
+      attribute versions; nothing is authorised by it. The token is what
+      authorises, which is why this whole prefix never looks at a user.
+    #}
+    <p class="muted" style="margin-bottom:0">{{ t('guest_name_note') }}</p>
+  </div>
+</div>
+{% endblock %}

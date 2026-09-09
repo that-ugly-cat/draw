@@ -1,0 +1,35 @@
+[project]
+name = "draw"
+version = "0.1.0"
+description = "draw.io diagrams inside the borant perimeter: per-user workspace, per-diagram share links, protected concurrent editing"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115,<0.116",
+    "starlette>=0.41,<0.42",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    "bcrypt>=4.1",
+    "python-jose[cryptography]>=3.3",
+    "httpx>=0.27",
+]
+
+# fastapi and starlette are both pinned, and the pin on starlette is the one
+# that matters: Starlette 1.x broke the legacy TemplateResponse signature and
+# pinning fastapi alone does not hold starlette back, because fastapi's own
+# range is wide. Three repos were migrated the hard way before this was written
+# down.
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"draw.server" = ["templates/*.html", "static/css/*.css", "static/js/*.js"]

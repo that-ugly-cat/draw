@@ -1,0 +1,10 @@
+.venv/
+data/
+tests/
+__pycache__/
+*.pyc
+.pytest_cache/
+.git/
+.env
+SPEC.md
+dev-run.py

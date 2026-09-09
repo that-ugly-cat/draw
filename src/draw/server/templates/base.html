@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="{{ lang }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{{ t('app_name') }}{% endblock %}</title>
+{# The fingerprint in the URL is not optional: the zone sits behind Cloudflare,
+   which caches static assets for four hours. Without it a deploy fixes the CSS
+   at the origin while everyone keeps seeing the old one. #}
+<link rel="stylesheet" href="/static/css/style.css?v={{ asset_v | default('0.1.0') }}">
+</head>
+<body>
+<div class="topbar">
+  <span class="brand">{{ t('app_name') }}</span>
+  {% block nav %}{% endblock %}
+  <span class="spacer"></span>
+  {% if user %}<span class="who">{{ user.label }}</span>{% endif %}
+  <select class="btn btn-small" onchange="location.href='/lang/'+this.value" aria-label="{{ t('language') }}">
+    {% for code, name in languages.items() %}
+    <option value="{{ code }}" {% if code == lang %}selected{% endif %}>{{ name }}</option>
+    {% endfor %}
+  </select>
+  {% if user %}<a class="btn btn-small" href="/logout">{{ t('sign_out') }}</a>{% endif %}
+</div>
+{% block body %}{% endblock %}
+</body>
+</html>
