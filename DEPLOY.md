@@ -1,81 +1,81 @@
 # Deploy
 
-Due container: l'app (porta **8023**) e draw.io non modificato (porta **8024**,
-solo su `127.0.0.1`). Caddy sta sull'host e li raggiunge entrambi.
+Two containers: the app (port **8023**) and unmodified draw.io (port **8024**,
+bound to `127.0.0.1` only). Caddy runs on the host and reaches both.
 
-Indirizzi, utenti e percorsi delle chiavi non stanno qui: stanno nella pagina
-privata del VPS.
+Addresses, users and key paths are not in here: they live in the private notes
+for the server.
 
 ## `.env`
 
 ```
-JWT_SECRET=<stringa lunga e casuale>
+JWT_SECRET=<long random string>
 AUTH_MODE=gateway
-BORANT_TRUSTED_PROXY=<gateway della rete docker>,<altre reti>
+BORANT_TRUSTED_PROXY=<docker network gateway>,<any other networks>
 EDITOR_URL=/editor/
 DATA_DIR=/app/data
 ```
 
-`AUTH_MODE=local` è il default del codice ed è il ritorno indietro quando il gate
-è giù: un riavvio con la variabile cambiata, non una procedura d'emergenza.
+`AUTH_MODE=local` is the code's own default and it is the way back in when the
+gate is down: a restart with the variable changed, not an emergency procedure.
 
-## `BORANT_TRUSTED_PROXY` accetta una lista, e deve
+## Where the code comes from
 
-Docker sceglie fra i gateway delle reti di un container in **ordine alfabetico di
-nome di rete**. Aggiungere una rete sposta l'indirizzo da cui il proxy sembra
-arrivare, e un gateway spostato spegne il login senza dire perché. È successo
-l'8 settembre 2026 su un'altra app, nel minuto in cui è arrivata una rete nuova.
-
-Quindi: **quando aggiungi una rete a questo container, allarghi la lista.** E la
-verifica non è «l'app risponde 200» — una pagina gated risponde 302 sia perché
-non sei loggato sia perché l'app ha buttato via la tua identità. Si prova con una
-**sessione vera** e si legge il log dell'app, dove il rifiuto ha una riga che lo
-dice per nome.
-
-## Caddy
-
-Il blocco si **genera**, non si scrive:
-
-```bash
-python caddy.py --gated
-```
-
-Legge `PUBLIC_PATHS` dal codice. Dopo aver toccato le rotte, rigenera e confronta
-con quello che gira. Nota la forma: `/editor/*` ha un `handle_path` suo che va
-dritto al container dell'editor e non passa né dal gate né dall'app.
-
-## Cloudflare, per questo host
-
-- **Email Address Obfuscation** (Scrape Shield) va spenta con una Configuration
-  Rule: riscrive le email nell'HTML e inietta uno script di terze parti, che in
-  una pagina che ospita un iframe è solo rumore in più da escludere quando
-  qualcosa non va.
-- Gli asset portano già l'impronta nell'URL (`?v=`), perché la zona cacha gli
-  statici quattro ore.
-
-## Borant ID
-
-Costo d'ingresso: una riga in `PERIMETER` e un `seed --apps`. **Nessun
-vocabolario di ruoli**, perché il codice non ne legge nessuno: dichiararne uno
-offrirebbe un menu che non apre niente.
-
-## Da dove arriva il codice
-
-Clone di `github.com/that-ugly-cat/draw` nella cartella di deploy. Aggiornare:
+A clone of `github.com/that-ugly-cat/draw` in the deploy directory. To update:
 
 ```bash
 git pull && docker compose up -d --build
 ```
 
-Due file **non** arrivano con il `pull` e vivono solo sul server: il `.env`, e la
-`SPEC.md`, che è gitignorata perché contiene l'analisi dei modi di guasto. Chi
-clona da zero non ha la seconda e non ha modo di accorgersene.
+Two files do **not** arrive with the pull and live only on the server: the
+`.env`, and `SPEC.md`, which is gitignored because it holds the failure-mode
+analysis. Whoever clones from scratch does not have the second one and has no
+way of noticing.
 
-Se dopo un `pull` `git status` segnala modificati `caddy.py`, `seed.py` o
-`dev-run.py` senza righe di differenza, sono i bit di permesso: `git config
-core.fileMode false` e non se ne parla più.
+If after a pull `git status` reports `caddy.py`, `seed.py` or `dev-run.py` as
+modified with no differing lines, those are permission bits: `git config
+core.fileMode false` and it stops.
 
-## Prima messa in piedi
+## `BORANT_TRUSTED_PROXY` takes a list, and it has to
+
+Docker picks between the gateways of a container's networks in **alphabetical
+order of network name**. Adding a network moves the address the proxy appears to
+come from, and a moved gateway switches off the login without saying why. It
+happened to another app on 8 September 2026, in the minute a new network
+arrived.
+
+So: **when you add a network to this container, you widen the list.** And the
+check is not "the app answers 200" — a gated page answers 302 both because you
+are not signed in and because the app threw your identity away. Test with a
+**real session** and read the app log, where the refusal has a line that names
+itself.
+
+## Caddy
+
+The site block is **generated**, not written:
+
+```bash
+python caddy.py --gated
+```
+
+It reads `PUBLIC_PATHS` from the code. After touching routes, regenerate and
+diff against what is running.
+
+Note the shape: `/editor/*` has a `handle_path` of its own that goes straight to
+the editor container and passes through neither the gate nor the app. It carries
+a `rewrite * /draw{uri}`, and that is not decoration: the `jgraph/drawio` image
+is Tomcat and deploys its war under `/draw/`, so proxying the stripped path
+answers 404 for everything including the assets.
+
+## Behind a CDN
+
+- Turn off any HTML email-address obfuscation for this host: it rewrites
+  addresses in the markup and injects a third-party script, which inside a page
+  hosting an iframe is one more thing to rule out when something misbehaves.
+- Static assets already carry a fingerprint in the URL (`?v=`), because the zone
+  caches them for hours.
+
+## First run
 
 ```bash
 docker compose up -d --build
@@ -83,17 +83,17 @@ docker exec draw python seed.py
 curl -s localhost:8023/healthz
 ```
 
-`/healthz` sta fuori dal gate e resta verde **anche se il gate è morto e nessuno
-riesce più a entrare**: un controllo utile punta anche a una rotta gated.
+`/healthz` sits outside the gate and stays green **even when the gate is dead
+and nobody can get in any more**: a useful check also points at a gated route.
 
-## Manutenzione
+## Maintenance
 
-Lo sfoltimento delle versioni non restituisce lo spazio da solo. Dopo una
-potatura, o periodicamente:
+Thinning the version history does not return the disk space on its own. After a
+prune, or periodically:
 
 ```bash
 docker exec draw python -c "from draw.server.models import engine; engine.raw_connection().execute('VACUUM')"
 ```
 
-Backup: il database sta in `data/`, montato come volume. È l'unica cosa da
-salvare — non ci sono file di diagramma accanto, per scelta.
+Backups: the database is in `data/`, mounted as a volume. It is the only thing
+to back up — there are no diagram files beside it, by design.

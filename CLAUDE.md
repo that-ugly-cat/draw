@@ -1,57 +1,65 @@
-# CLAUDE.md — draw.borant.eu
+# CLAUDE.md — draw
 
-*Istruzioni per chi lavora su questo repository con Claude Code.*
+*Instructions for anyone working on this repository with Claude Code.*
 
-## Prima di toccare autenticazione, rotte, Caddy, MCP, faccia o lingue
+## Before touching authentication, routes, Caddy, MCP, the look or the languages
 
-**Leggi le convenzioni dei tool borant prima di scrivere, non dopo.** Sono
-scritte per intero in una pagina sola, e si raggiungono in due modi:
+**Read the borant tool conventions before writing, not after.** They are written
+out in full on a single page (in Italian), reachable two ways:
 
-- se hai il repository `Ono3` sotto mano:
+- if you have the `Ono3` repository at hand:
   `wiki/projects/strumenti/convenzioni-tool-borant.md`
-- altrimenti, da qualunque macchina: l'MCP **`onopedia`**,
+- otherwise, from any machine: the **`onopedia`** MCP,
   `get_page("convenzioni-tool-borant")`
 
-La versione operativa col codice sta in `borant-id/SPEC.md` §20, **gitignorata**:
-esiste solo sul disco di chi ha quel clone.
+The operational version with the code sits in `borant-id/SPEC.md` §20, which is
+**gitignored**: it exists only on the disk of whoever has that clone.
 
-Le sezioni che toccano questo repository sono autenticazione (`local` è il
-default, la chiave è il `subject` e mai l'email), **path pubblici** — che qui
-sono la parte delicata, perché la superficie ospite include una `POST` che salva
-— la vetrina e la home (`/` vetrina che non guarda chi la legge, `/app` gated),
-fallire chiusi invece di rimbalzare sul login, faccia e lingue.
+The sections that apply to this repository are authentication (`local` is the
+default, the key is the `subject` and never the email), **public paths** — the
+delicate part here, because the guest surface includes a `POST` that saves — the
+showcase and home rule (`/` is a showcase that never looks at who is reading it,
+the app lives at `/app`, gated), failing closed instead of bouncing to the login,
+the look and the languages.
 
-**Non ricopiare le convenzioni qui dentro.** Due copie divergono, e quella
-sbagliata è sempre la più vicina.
+**Do not copy the conventions in here.** Two copies diverge, and the wrong one is
+always the nearer.
 
-## La cosa specifica di questo repository
+## The thing specific to this repository
 
-> **Sotto `/s/` nessun metodo guarda mai `X-Borant-*`, per costruzione.**
+> **Under `/s/` no method ever looks at `X-Borant-*`, by construction.**
 
-La superficie ospite è autorizzata dal token e non dall'identità. Il giorno che
-una rotta lì dentro ha bisogno di sapere *chi* sta chiedendo, quella rotta non
-appartiene a `/s/` e va spostata sotto il prefisso gated, non ritagliata per
-metodo. Il perché sta in `SPEC.md` §5.
+The guest surface is authorised by the token and never by an identity. The day a
+route in there needs to know *who* is asking, that route does not belong under
+`/s/`: it moves under the gated prefix, and it is not carved out by method. The
+reasoning is in `SPEC.md` §5.
 
-## Le tre fonti di questo repository
+## The three sources in this repository
 
-- `README.md` — l'uso
-- `DEPLOY.md` — il server, senza IP, utenti e percorsi di chiavi
-- `SPEC.md` — il perché. **Gitignorata**, perché contiene l'analisi dei modi di
-  guasto e le decisioni scartate. Se non ce l'hai, chiedila: non arriva con un
-  `git pull`.
+- `README.md` — how to use it
+- `DEPLOY.md` — the server, without addresses, users or key paths
+- `SPEC.md` — the why. **Gitignored**, because it holds the failure-mode analysis
+  and the discarded decisions. If you do not have it, ask: it does not arrive
+  with a `git pull`.
 
-## Il blocco Caddy non si scrive a mano
+## The Caddy block is not written by hand
 
-È generato: `python caddy.py --gated` legge `PUBLIC_PATHS` nel modulo del
-server. La lista dei path pubblici vive in un posto solo, così chi aggiunge una
-rotta pubblica se ne accorge mentre la scrive. Dopo aver toccato le rotte,
-rigenera e confronta con quello che gira in produzione.
+It is generated: `python caddy.py --gated` reads `PUBLIC_PATHS` from the server
+module. The list of public paths lives in exactly one place, so whoever adds a
+public route notices while writing it. After touching routes, regenerate and diff
+against what is running in production.
 
-## L'editor non si tocca
+## The editor is not to be touched
 
-`jgraph/drawio` gira in un container accanto, servito sotto `/editor/*`, con il
-tag **pinnato**. Nessuna riga dell'editor viene modificata: è la decisione che
-rende l'aggiornamento un cambio di tag invece di un merge. Se una richiesta
-sembra richiedere una modifica all'editor, è una richiesta di livello 3 (vedi
-`SPEC.md` §11) e va discussa prima, non implementata.
+`jgraph/drawio` runs in a container next door, served under `/editor/*`, with a
+**pinned** tag. Not one line of the editor is modified: that is the decision that
+makes an upgrade a tag change instead of a merge. If a request seems to require
+modifying the editor, it is a level-3 request (see `SPEC.md` §11) and it gets
+discussed first, not implemented.
+
+## Language
+
+Code, comments and documentation in this repository are in **English**. The user
+interface is translated, and the strings live in `locales.py` — that is the only
+place other languages belong. A string written straight into a template is a
+defect even when it happens to be in the right language.

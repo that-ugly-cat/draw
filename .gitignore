@@ -1,15 +1,14 @@
-# Segreti e stato locale
+# Secrets and local state
 .env
 .env.bak-*
 data/
 
-# SPEC.md non va in un repo pubblico: contiene l'analisi dei modi di guasto e
-# le decisioni scartate. Stessa scelta di papertrail, lssr, dovetail e catena.
-# Chi clona da zero non ce l'ha e non ha modo di accorgersene — il CLAUDE.md
-# lo dice a voce alta proprio per questo.
+# SPEC.md does not belong in a public repository: it holds the failure-mode
+# analysis and the discarded decisions. Whoever clones from scratch does not
+# have it and has no way of noticing — which is why CLAUDE.md says so out loud.
 SPEC.md
 
-# Ambiente e artefatti
+# Environment and build artefacts
 .venv/
 __pycache__/
 *.pyc
