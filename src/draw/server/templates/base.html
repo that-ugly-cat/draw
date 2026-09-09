@@ -20,7 +20,10 @@
     <option value="{{ code }}" {% if code == lang %}selected{% endif %}>{{ name }}</option>
     {% endfor %}
   </select>
-  {% if user %}<a class="btn btn-small" href="/logout">{{ t('sign_out') }}</a>{% endif %}
+  {# Offered only when the app can actually perform it: in gateway mode the
+     session belongs to the gate, so without a configured logout endpoint a
+     button here would promise something it cannot do. #}
+  {% if user and can_sign_out %}<a class="btn btn-small" href="/logout">{{ t('sign_out') }}</a>{% endif %}
 </div>
 {% block body %}{% endblock %}
 </body>

@@ -37,6 +37,19 @@ downloads as a `.drawio` file.
 draw.io embeds as a data URI. The save is refused but the document stays open in
 the editor: nothing is lost.
 
+## Two modes
+
+The app authenticates either way and neither mode is a degraded version of the
+other. In `AUTH_MODE=local` it signs people in itself against its own users
+table, and accounts are created with `seed.py`. In `AUTH_MODE=gateway` it trusts
+an identity gate in front of it, profiles appear on first arrival, and the
+session belongs to the gate rather than to the app — so sign-out is only offered
+when a gate logout endpoint is configured.
+
+`local` is the default in the code, for security before portability: an app that
+believes identity headers with nothing in front of it hands identity to anyone
+who can send a header. `DEPLOY.md` covers both.
+
 ## Development
 
 ```bash

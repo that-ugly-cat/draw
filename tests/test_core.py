@@ -1,10 +1,11 @@
 """
 The rules worth a test are the ones that would be expensive to get wrong.
 
-Not coverage: four behaviours. That a save arriving without the lock is kept
-rather than refused; that the guest surface never looks at an identity; that the
-size cap answers with a code; and that draw.io's own compressed payload is
-normalised on the way in.
+Not coverage. That a save arriving without the lock is kept rather than refused;
+that the guest surface never looks at an identity; that the size cap answers with
+a code; that draw.io's own compressed payload is normalised on the way in; and
+that both authentication modes behave, including the one place they differ that
+a user can see — whether the app can end the session it is showing.
 """
 
 import os
@@ -163,3 +164,51 @@ def test_compressed_payload_is_normalised():
 
 def test_plain_payload_is_left_alone():
     assert storage.normalise(XML_A) == XML_A
+
+
+# --- the two modes -----------------------------------------------------------
+#
+# Both are first-class, so both get a test. The interesting half is sign-out:
+# the app owns the session in local mode and does not in gateway mode, and the
+# failure worth preventing is a button that clears nothing while the gate cookie
+# stays alive.
+
+
+def test_local_mode_signs_out(client):
+    r = client.get("/logout", follow_redirects=False)
+    assert r.status_code == 303
+    assert "session" in r.headers.get("set-cookie", "")
+
+
+def test_gateway_mode_does_not_fake_a_sign_out(monkeypatch):
+    from draw.server import main as m
+
+    monkeypatch.setattr(m, "gateway_mode", lambda: True)
+    monkeypatch.setattr(m, "GATE_LOGOUT_URL", "")
+    r = TestClient(m.app).get("/logout", follow_redirects=False)
+    assert r.status_code == 501
+    # and above all it does not clear a cookie it does not own
+    assert "set-cookie" not in r.headers
+
+
+def test_gateway_mode_hands_sign_out_to_the_configured_endpoint(monkeypatch):
+    from draw.server import main as m
+
+    monkeypatch.setattr(m, "gateway_mode", lambda: True)
+    monkeypatch.setattr(m, "GATE_LOGOUT_URL", "https://gate.example.org/logout")
+    r = TestClient(m.app).get("/logout", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "https://gate.example.org/logout"
+
+
+def test_login_and_logout_are_public_paths():
+    """Both must be reachable without the gate turning them away.
+
+    They qualify under the house rule — no method on them needs to know who is
+    asking — and in gateway mode the app has something to say on each: a way in,
+    and where sign-out actually lives.
+    """
+    from draw.server.main import PUBLIC_PATHS
+
+    assert "/login" in PUBLIC_PATHS
+    assert "/logout" in PUBLIC_PATHS

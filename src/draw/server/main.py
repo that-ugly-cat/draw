@@ -51,7 +51,22 @@ log = logging.getLogger("draw.main")
 # The matcher lists the *public* paths and not the private ones, deliberately:
 # the default branch is the gated one, so a route added later is born closed
 # rather than open.
-PUBLIC_PATHS = ["/", "/healthz", "/static/*", "/lang/*", "/editor/*", "/s/*"]
+PUBLIC_PATHS = [
+    "/",             # the showcase, which never looks at its reader
+    "/healthz",
+    "/static/*",
+    "/lang/*",
+    "/editor/*",     # the drawio container, reached by Caddy, never by this app
+    "/s/*",          # the guest surface, authorised by a token and not identity
+    "/login",        # in gateway mode the app turns these away itself, rather
+    "/logout",       # than bouncing off the gate to say something it knows
+]
+
+# Where the gate ends a session, when there is a gate. Empty in standalone, and
+# empty is a working answer: with no value the app stops offering a sign-out it
+# cannot perform, instead of pretending. Configurable rather than hardwired,
+# because the app has to keep working with no Borant ID anywhere in sight.
+GATE_LOGOUT_URL = os.environ.get("GATE_LOGOUT_URL", "").strip()
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GUEST_NAME_COOKIE = "guest_name"
@@ -88,6 +103,12 @@ def render(request: Request, name: str, ctx: dict | None = None) -> HTMLResponse
         "languages": LANGUAGES,
         "t": lambda key, **kw: t(lang, key, **kw),
         "fmt": lambda d: d.strftime(DATE_FORMAT.get(lang, DATE_FORMAT[DEFAULT])) if d else "",
+        # Templates need to know which mode they are rendering in, because some
+        # affordances only exist in one of them: the app owns the session in
+        # local mode and does not in gateway mode, so it can offer sign-out in
+        # the first case and only pass the request along in the second.
+        "gateway": gateway_mode(),
+        "can_sign_out": (not gateway_mode()) or bool(GATE_LOGOUT_URL),
     }
     return templates.TemplateResponse(request, name, {**base, **(ctx or {})})
 
@@ -188,6 +209,24 @@ def login(
 
 @app.get("/logout")
 def logout():
+    """Ending a session the app does not own is not something it can fake.
+
+    In local mode the cookie is ours and deleting it is the whole of it. In
+    gateway mode the session belongs to the gate: clearing anything here would
+    leave the browser holding a live gate cookie while the page claims to be
+    signed out, which is worse than not offering the button. So the app either
+    hands the request to the configured gate endpoint, or — with none
+    configured — says plainly that sign-out lives elsewhere.
+    """
+    if gateway_mode():
+        if GATE_LOGOUT_URL:
+            return RedirectResponse(GATE_LOGOUT_URL, status_code=status.HTTP_303_SEE_OTHER)
+        return PlainTextResponse(
+            "Sign-out is handled by the identity gate in front of this app, and "
+            "no GATE_LOGOUT_URL is configured. Close the browser session, or set "
+            "that variable to the gate's logout endpoint.",
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        )
     resp = RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
     resp.delete_cookie(COOKIE)
     return resp
