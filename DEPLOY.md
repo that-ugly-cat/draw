@@ -59,6 +59,22 @@ Costo d'ingresso: una riga in `PERIMETER` e un `seed --apps`. **Nessun
 vocabolario di ruoli**, perché il codice non ne legge nessuno: dichiararne uno
 offrirebbe un menu che non apre niente.
 
+## Da dove arriva il codice
+
+Clone di `github.com/that-ugly-cat/draw` nella cartella di deploy. Aggiornare:
+
+```bash
+git pull && docker compose up -d --build
+```
+
+Due file **non** arrivano con il `pull` e vivono solo sul server: il `.env`, e la
+`SPEC.md`, che è gitignorata perché contiene l'analisi dei modi di guasto. Chi
+clona da zero non ha la seconda e non ha modo di accorgersene.
+
+Se dopo un `pull` `git status` segnala modificati `caddy.py`, `seed.py` o
+`dev-run.py` senza righe di differenza, sono i bit di permesso: `git config
+core.fileMode false` e non se ne parla più.
+
 ## Prima messa in piedi
 
 ```bash
