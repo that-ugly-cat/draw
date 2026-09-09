@@ -14,7 +14,10 @@
   <span class="brand">{{ t('app_name') }}</span>
   {% block nav %}{% endblock %}
   <span class="spacer"></span>
-  {% if user %}<span class="who">{{ user.label }}</span>{% endif %}
+  {% if user %}<span class="who">{{ user.label }}</span>
+  {# Only for a signed-in owner: the guest surface renders with no user, and the
+     showcase never receives one at all, so this cannot leak into either. #}
+  <a class="btn btn-small" href="/app/keys">{{ t('keys') }}</a>{% endif %}
   <select class="btn btn-small" onchange="location.href='/lang/'+this.value" aria-label="{{ t('language') }}">
     {% for code, name in languages.items() %}
     <option value="{{ code }}" {% if code == lang %}selected{% endif %}>{{ name }}</option>

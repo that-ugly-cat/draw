@@ -418,3 +418,26 @@ def test_the_moved_banner_is_not_visible_by_default(client, diagram_id):
     banner = banner[:banner.index(">")]
     assert "hidden" in banner
     assert "display" not in banner, "inline display would defeat the hidden attribute"
+
+
+def test_the_keys_page_is_reachable_by_clicking(client, diagram_id):
+    """A page nothing links to is a page that does not exist for the user.
+
+    The MCP key manager worked from the first commit and was unreachable from
+    the interface for as long: the only way in was typing the URL.
+    """
+    assert 'href="/app/keys"' in client.get("/app").text
+    assert client.get("/app/keys").status_code == 200
+
+
+def test_the_keys_link_never_reaches_a_guest_or_the_showcase(client, diagram_id):
+    """It hangs off `user`, which those two surfaces never carry."""
+    client.post(
+        f"/app/d/{diagram_id}/links",
+        data={"mode": "ro", "label": "G", "days": ""},
+        follow_redirects=True,
+    )
+    token = _token(diagram_id, "ro")
+    anon = TestClient(app)
+    assert "/app/keys" not in anon.get("/").text
+    assert "/app/keys" not in anon.get(f"/s/{token}").text
