@@ -402,3 +402,19 @@ def test_every_write_moves_the_revision_exactly_once(client, diagram_id):
     a = client.post(base + "/save", json={"session": "s1", "xml": XML_A}).json()["revision"]
     b = client.post(base + "/save", json={"session": "s1", "xml": XML_B}).json()["revision"]
     assert b == a + 1
+
+
+def test_the_moved_banner_is_not_visible_by_default(client, diagram_id):
+    """It carries `hidden`, and nothing in the markup may override it.
+
+    The first version set `display:flex` inline next to the attribute. An inline
+    display beats the browser's own `[hidden] { display: none }`, so the banner
+    read as hidden in the markup and was on screen from the moment the page
+    loaded — announcing a change on diagrams nobody had touched. The layout now
+    lives in a class, and a global rule makes the attribute win regardless.
+    """
+    page = client.get(f"/app/d/{diagram_id}").text
+    banner = page[page.index('id="moved-banner"'):]
+    banner = banner[:banner.index(">")]
+    assert "hidden" in banner
+    assert "display" not in banner, "inline display would defeat the hidden attribute"

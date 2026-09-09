@@ -21,7 +21,7 @@
   {# Shown only when the document moved under an editor that has unsaved work.
      When there is nothing unsaved the page just reloads, silently: that is the
      common case, because autosave means "unsaved" lasts about a second. #}
-  <div id="moved-banner" class="flash" hidden style="margin:0;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+  <div id="moved-banner" class="flash banner-row" hidden>
     <span>{{ t('moved_reload') }}</span>
     <span style="flex:1"></span>
     <button id="moved-reload" class="btn btn-small btn-primary">{{ t('reload_it') }}</button>

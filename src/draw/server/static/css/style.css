@@ -179,3 +179,15 @@ input[type="text"]:focus, select:focus { outline: 1px solid var(--accent); }
   background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
   padding: 1px 5px; font-size: 12px;
 }
+
+/* Layout for a row that gets toggled with the `hidden` attribute.
+   It lives in a class and never inline, because an inline `display` beats the
+   browser's own `[hidden] { display: none }` rule: the element then carries the
+   attribute, reads as hidden in the markup, and is on screen the whole time.
+   That is exactly how a "changed elsewhere" banner ended up permanently visible
+   on diagrams nobody had touched. */
+.banner-row { margin: 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+/* And the guard, so the same mistake cannot be made again anywhere: whatever a
+   class or an inline style says, the attribute wins. */
+[hidden] { display: none !important; }
