@@ -126,6 +126,34 @@ that saves live on a public branch.
 
 ---
 
+## The MCP surface
+
+`/mcp` carries a per-user key and must **skip the gate**: it talks to programs,
+and a redirect to a login page is the last thing an MCP client can handle. The
+generator already puts it in the same matcher as the public paths, which is also
+what strips `X-Borant-*` from it.
+
+Four things break here every time, on every app, so they are worth checking
+rather than assuming:
+
+- **`PUBLIC_URL` must be set.** The transport validates the Host header against
+  DNS rebinding and refuses any name it does not know. The symptom is a tool
+  that looks broken and a variable that is missing, and it does not reproduce
+  from the machine itself — on `127.0.0.1` the same call works.
+- **The narrow matcher, `/mcp /mcp/*`**, never `/mcp*`. The second form also
+  covers `/mcp/k/{key}`, the variant for clients that cannot set headers; there
+  the key lands in access logs, which is why keys are per-client and revocable.
+- **The advertised endpoint has no trailing slash**, and a Starlette mount
+  answers that with a 307 which MCP clients do not follow on POST. The
+  middleware normalises it; the check is that `POST /mcp` is not a 307.
+- **Read the 401, do not count it.** With `/mcp` still inside the gate a call
+  without a key gets 401 as well, but from the gate: the body says
+  `{"error":"unauthenticated"}` instead of the app's message. Two refusals with
+  the same number and opposite causes.
+
+The session manager runs inside the parent app's lifespan; mounts do not
+propagate lifespans, and without it the transport answers 500 without saying why.
+
 ## Where the code comes from
 
 A clone of `github.com/that-ugly-cat/draw` in the deploy directory. To update:

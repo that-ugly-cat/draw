@@ -122,6 +122,12 @@ class Diagram(Base):
     updated_by_label = Column(String, nullable=True)
     version_no = Column(Integer, nullable=False, default=0)
 
+    # Bumped on **every** write to `xml`, which `version_no` is not: a version
+    # row is only cut on the debounce, so it cannot answer "has the document
+    # moved since I last saw it". That question is asked by every open editor
+    # on every lock refresh, and the answer decides whether it reloads.
+    revision = Column(Integer, nullable=False, default=0)
+
     # --- the soft lock (SPEC.md §4) ---
     #
     # Keyed on a session and not on a user, deliberately: the same person in two
@@ -214,6 +220,51 @@ class ShareLink(Base):
         return True
 
 
+class ApiKey(Base):
+    """An MCP key carries an identity, not a capability.
+
+    Every call runs as its owner and goes through the same access checks as the
+    web, so it reaches exactly what that person reaches. `last_used_at` earns
+    its keep in one place, but a useful one: telling a live key from a forgotten
+    one when deciding what to revoke.
+    """
+
+    __tablename__ = "api_keys"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    key = Column(String, unique=True, nullable=False, index=True)
+    label = Column(String, default="", nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    last_used_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+
+    user = relationship("User")
+
+    def is_live(self) -> bool:
+        return self.revoked_at is None
+
+
+def _add_missing_columns() -> None:
+    """Idempotent column adds, because create_all does not alter tables.
+
+    Small on purpose: a real migration tool for one app with a handful of
+    columns is more machinery than the problem. What matters is that a deploy
+    onto an existing database does not need anybody to remember an ALTER by
+    hand — that is the step that gets skipped, at night, on the live one.
+    """
+    wanted = {"diagrams": {"revision": "INTEGER NOT NULL DEFAULT 0"}}
+    with engine.begin() as conn:
+        for table, columns in wanted.items():
+            have = {r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+            if not have:
+                continue  # table not created yet; create_all will do it whole
+            for name, ddl in columns.items():
+                if name not in have:
+                    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+
+
 def init_db() -> None:
     os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
     Base.metadata.create_all(engine)
+    _add_missing_columns()

@@ -64,19 +64,42 @@ def test_showcase_is_public_and_blind():
     assert 'href="/login"' not in r.text
 
 
-def test_save_without_the_lock_is_kept_not_refused(client, diagram_id):
-    """The rule that makes level 1 safe."""
+def test_same_person_in_two_sessions_is_not_a_conflict(client, diagram_id):
+    """A browser tab and a script, both yours, are one intent.
+
+    Refusing one of them would park half your own work as an orphan somewhere
+    you then have to go and find. What keeps this honest is on the client: the
+    open editor learns the revision moved and reloads.
+    """
     base = f"/api/d/{diagram_id}"
     first = client.post(base + "/save", json={"session": "sess-one", "xml": XML_A})
     assert first.json()["ok"] is True
+    r1 = first.json()["revision"]
 
-    # A second session saves while the first still holds the lock.
     second = client.post(base + "/save", json={"session": "sess-two", "xml": XML_B})
     body = second.json()
-    assert body["ok"] is False
-    assert body["reason"] == "lock_held"
+    assert body["ok"] is True
+    # and the revision moved, which is what an open editor watches
+    assert body["revision"] > r1
+
+
+def test_a_different_person_still_orphans(client, diagram_id):
+    """The rule that makes level 1 safe, for the case it was written for."""
+    client.post(f"/api/d/{diagram_id}/save", json={"session": "owner-tab", "xml": XML_A})
+    client.post(
+        f"/app/d/{diagram_id}/links",
+        data={"mode": "rw", "label": "G", "days": ""},
+        follow_redirects=True,
+    )
+    token = _token(diagram_id, "rw")
+
+    guest = TestClient(app)
+    guest.cookies.set("guest_name", "Someone else")
+    out = guest.post(f"/s/{token}/save", json={"session": "guest-1", "xml": XML_B}).json()
+    assert out["ok"] is False
+    assert out["reason"] == "lock_held"
     # The important half: it did not vanish.
-    assert body["version"] is not None
+    assert out["version"] is not None
 
     page = client.get(f"/app/d/{diagram_id}/versions")
     assert "lock held by" in page.text
@@ -212,3 +235,138 @@ def test_login_and_logout_are_public_paths():
 
     assert "/login" in PUBLIC_PATHS
     assert "/logout" in PUBLIC_PATHS
+
+
+# --- the MCP surface ---------------------------------------------------------
+
+
+def _key_for(email: str = "t@example.org") -> str:
+    from draw.server.models import ApiKey
+
+    db = SessionLocal()
+    try:
+        u = db.query(User).filter(User.email == email).first()
+        row = ApiKey(user_id=u.id, key=f"k-{email}", label="test")
+        db.add(row)
+        db.commit()
+        return row.key
+    finally:
+        db.close()
+
+
+def test_mcp_without_a_key_is_refused_by_the_app(client):
+    """401, and the body is the app's.
+
+    Worth asserting the body and not the number: with /mcp still inside the gate
+    the same 401 arrives from Borant ID instead, and whoever counts status codes
+    declares a job finished that has not started.
+    """
+    r = TestClient(app).post("/mcp", json={})
+    assert r.status_code == 401
+    assert r.json()["error"] == "missing or invalid API key"
+
+
+def test_mcp_path_without_the_slash_does_not_redirect(client):
+    """The endpoint advertised is the one without the trailing slash.
+
+    A Starlette mount answers that with a 307, and MCP clients do not follow
+    redirects on POST — behind TLS termination it is worse, because the app
+    builds an http:// redirect. The middleware normalises it, so the failure to
+    guard against is a 307 rather than any particular success.
+    """
+    r = TestClient(app).post("/mcp", json={}, follow_redirects=False)
+    assert r.status_code != 307
+
+
+def test_tools_run_as_the_key_owner(client, diagram_id):
+    from draw.server import mcp_app
+    from draw.server.auth import hash_password, set_caller
+
+    db = SessionLocal()
+    try:
+        me = db.query(User).filter(User.email == "t@example.org").first()
+        other = db.query(User).filter(User.email == "other@example.org").first()
+        if not other:
+            other = User(email="other@example.org", name="Other",
+                         password_hash=hash_password("x"), is_active=True)
+            db.add(other)
+            db.commit()
+        my_id, other_id = me.id, other.id
+    finally:
+        db.close()
+
+    set_caller(type("U", (), {"id": my_id, "label": "Tester"})())
+    assert any(d["id"] == diagram_id for d in mcp_app.list_diagrams()["diagrams"])
+
+    # Somebody else's diagram is "not found", never "forbidden": otherwise the
+    # model can enumerate what it cannot read.
+    set_caller(type("U", (), {"id": other_id, "label": "Other"})())
+    assert "error" in mcp_app.outline_diagram(diagram_id)
+    assert mcp_app.list_diagrams()["count"] == 0
+
+
+def test_outline_is_far_smaller_than_the_document(client, diagram_id):
+    """The reason the surface is shaped this way at all."""
+    import json
+
+    from draw.server import mcp_app
+    from draw.server.auth import set_caller
+
+    db = SessionLocal()
+    try:
+        me = db.query(User).filter(User.email == "t@example.org").first()
+        set_caller(type("U", (), {"id": me.id, "label": "Tester"})())
+    finally:
+        db.close()
+
+    big = ('<mxfile><diagram id="p" name="P"><mxGraphModel><root>'
+           '<mxCell id="0"/><mxCell id="1" parent="0"/>'
+           + "".join(
+               f'<mxCell id="c{i}" value="Shape {i}" style="whiteSpace=wrap;'
+               f'rounded=1;fillColor=#EAF1FB;strokeColor=#2E5FA3;fontSize=9;" '
+               f'vertex="1" parent="1"><mxGeometry x="{i * 120}" y="0" '
+               f'width="100" height="60" as="geometry"/></mxCell>'
+               for i in range(40))
+           + "</root></mxGraphModel></diagram></mxfile>")
+    mcp_app.update_diagram(diagram_id, big)
+
+    full = len(mcp_app.get_diagram(diagram_id)["xml"])
+    outline = len(json.dumps(mcp_app.outline_diagram(diagram_id)))
+    assert outline < full / 2
+
+
+def test_update_cells_patches_by_id(client, diagram_id):
+    from draw.server import mcp_app
+    from draw.server.auth import set_caller
+
+    db = SessionLocal()
+    try:
+        me = db.query(User).filter(User.email == "t@example.org").first()
+        set_caller(type("U", (), {"id": me.id, "label": "Tester"})())
+    finally:
+        db.close()
+
+    out = mcp_app.update_cells(diagram_id, [{"cell_id": "c3", "text": "Renamed", "width": 200}])
+    assert out["saved"] is True
+    assert out["applied"] == ["c3"]
+
+    shapes = mcp_app.outline_diagram(diagram_id)["pages"][0]["shapes"]
+    changed = next(s for s in shapes if s["id"] == "c3")
+    assert changed["text"] == "Renamed"
+    assert changed["width"] == 200
+    # and nothing else moved
+    assert next(s for s in shapes if s["id"] == "c4")["text"] == "Shape 4"
+
+
+def test_check_diagram_reports_a_label_that_will_not_fit():
+    from draw.server import mcp_app
+
+    tight = ('<mxfile><diagram id="p" name="P"><mxGraphModel><root>'
+             '<mxCell id="0"/><mxCell id="1" parent="0"/>'
+             '<mxCell id="tiny" value="Clinics and ethics committees and then some" '
+             'style="whiteSpace=wrap;fontSize=8;" vertex="1" parent="1">'
+             '<mxGeometry x="0" y="0" width="60" height="16" as="geometry"/></mxCell>'
+             "</root></mxGraphModel></diagram></mxfile>")
+    out = mcp_app.check_diagram(xml=tight)
+    kinds = [f["kind"] for f in out["findings"]]
+    assert "label_overflow" in kinds

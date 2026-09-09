@@ -21,7 +21,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
-from draw.server.main import PUBLIC_PATHS  # noqa: E402
+from draw.server.main import MACHINE_PATHS, PUBLIC_PATHS  # noqa: E402
 
 HOST = os.environ.get("PUBLIC_HOST", "draw.borant.eu")
 PORT = os.environ.get("PORT", "8023")
@@ -67,7 +67,13 @@ def main() -> int:
     template = GATED if gated else PLAIN
     # /editor/* has its own handle_path above, so it does not belong in the
     # matcher list as well; everything else public does.
-    paths = [p for p in PUBLIC_PATHS if not p.startswith("/editor")]
+    #
+    # MACHINE_PATHS joins them, and not because they are public: they carry a
+    # per-user key and must skip the gate, because a redirect to a login page is
+    # the last thing an MCP client can handle. Riding in this matcher is also
+    # what applies `noforge` to them — that snippet strips X-Borant-* and lives
+    # only on the branches that bypass forward_auth.
+    paths = [p for p in PUBLIC_PATHS if not p.startswith("/editor")] + MACHINE_PATHS
     print(
         template.format(
             host=HOST,

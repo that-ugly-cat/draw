@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ t('keys') }} · {{ t('app_name') }}{% endblock %}
+{% block body %}
+<div class="container">
+  <h1>{{ t('keys') }}</h1>
+  <p class="lead">{{ t('keys_lead') }}</p>
+
+  <div class="card">
+    <div class="muted">{{ t('endpoint') }}</div>
+    <div class="linkbox" style="margin-top:6px">
+      <input type="text" readonly value="{{ endpoint }}" onclick="this.select()">
+    </div>
+  </div>
+
+  <div class="card">
+    <form method="post" action="/app/keys" style="display:flex;gap:8px;flex-wrap:wrap">
+      <input type="text" name="label" placeholder="{{ t('link_label') }}" style="flex:1;min-width:180px">
+      <button class="btn btn-primary" type="submit">{{ t('new_key') }}</button>
+    </form>
+  </div>
+
+  <div class="card table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>{{ t('link_label') }}</th><th>{{ t('created') }}</th><th>{{ t('last_used') }}</th><th></th></tr>
+      </thead>
+      <tbody>
+      {% for k in keys %}
+        <tr>
+          <td>
+            <div>{{ k.label or '—' }}</div>
+            {% if k.is_live() %}
+            <div class="linkbox" style="margin-top:6px">
+              <input type="text" readonly value="{{ k.key }}" onclick="this.select()">
+            </div>
+            {% endif %}
+          </td>
+          <td class="muted">{{ fmt(k.created_at) }}</td>
+          {# The field that makes revoking a decision rather than a guess. #}
+          <td class="muted">{{ k.last_used_at and fmt(k.last_used_at) or t('never_used') }}</td>
+          <td style="text-align:right">
+            {% if k.revoked_at %}
+              <span class="badge">{{ t('revoked') }}</span>
+            {% else %}
+              <form method="post" action="/app/keys/{{ k.id }}/revoke" style="display:inline">
+                <button class="btn btn-small btn-danger" type="submit">{{ t('revoke') }}</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="muted">—</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

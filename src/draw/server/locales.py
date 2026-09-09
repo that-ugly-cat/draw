@@ -72,6 +72,19 @@ STRINGS: dict[str, dict[str, str]] = {
         "saving": "Salvataggio…",
         "save_orphan": "Il lock è di {who}. Il tuo lavoro è stato conservato "
                        "come versione {n}.",
+        "moved_elsewhere": "Modificato altrove",
+        "moved_reload": "Questo diagramma è stato modificato altrove. Ricaricare "
+                        "sostituisce quello che vedi; le tue modifiche non salvate "
+                        "andrebbero perse.",
+        "reload_it": "Ricarica",
+        "keep_mine": "Tieni le mie",
+        "reloaded": "Aggiornato da un'altra sessione",
+        "keys": "Chiavi MCP",
+        "keys_lead": "Una chiave per client, revocabile. Porta la tua identità: "
+                     "raggiunge esattamente ciò che raggiungi tu, niente di più.",
+        "new_key": "Nuova chiave",
+        "endpoint": "Endpoint",
+        "created": "Creata",
         "language": "Lingua",
         "sign_out": "Esci",
         # error codes
@@ -137,6 +150,18 @@ STRINGS: dict[str, dict[str, str]] = {
         "saved": "Saved",
         "saving": "Saving…",
         "save_orphan": "{who} holds the lock. Your work was kept as version {n}.",
+        "moved_elsewhere": "Changed elsewhere",
+        "moved_reload": "This diagram was changed elsewhere. Reloading replaces "
+                        "what you see; unsaved changes of yours would be lost.",
+        "reload_it": "Reload",
+        "keep_mine": "Keep mine",
+        "reloaded": "Updated from another session",
+        "keys": "MCP keys",
+        "keys_lead": "One key per client, revocable. It carries your identity: "
+                     "it reaches exactly what you reach, and nothing more.",
+        "new_key": "New key",
+        "endpoint": "Endpoint",
+        "created": "Created",
         "language": "Language",
         "sign_out": "Sign out",
         "err_diagram_too_large": "This diagram is over the {limit} MB limit "

@@ -20,6 +20,7 @@ import ipaddress
 import logging
 import os
 import secrets
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 
 import bcrypt
@@ -238,3 +239,45 @@ def get_user_or_none(
     except HTTPException:
         return None
     return db.query(User).filter(User.id == uid, User.is_active.is_(True)).first()
+
+
+# --- the MCP surface ---------------------------------------------------------
+
+
+def check_api_key(db: Session, key: str) -> "ApiKey | None":
+    """The live row for this key, stamping its use.
+
+    `last_used_at` earns its keep in one place, but a useful one: telling a live
+    key from a forgotten one when deciding what to revoke.
+    """
+    from .models import ApiKey
+
+    if not key:
+        return None
+    row = db.query(ApiKey).filter(ApiKey.key == key).first()
+    if not row or not row.is_live():
+        return None
+    row.last_used_at = datetime.utcnow()
+    db.commit()
+    return row
+
+
+_caller: ContextVar["User | None"] = ContextVar("mcp_caller", default=None)
+
+
+def set_caller(user: "User | None") -> None:
+    """Called once per MCP request, by the middleware that resolved the key."""
+    _caller.set(user)
+
+
+def current_caller() -> User:
+    """The person this MCP call runs as.
+
+    A ContextVar rather than a parameter threaded through every tool: the MCP
+    layer does not carry request objects into tool functions, and an identity
+    that has to be passed by hand is one somebody eventually forgets to pass.
+    """
+    user = _caller.get()
+    if user is None:
+        raise PermissionError("no MCP caller in context — the key gate did not run")
+    return user

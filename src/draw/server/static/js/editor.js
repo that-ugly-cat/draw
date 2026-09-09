@@ -24,6 +24,12 @@
   let dirty = false;
   let lastSent = null;
 
+  // The revision we believe the server holds. Every answer that carries one --
+  // a lock refresh, a save -- is a chance to notice the document moved under
+  // us, which is what happens when the same person edits it from a script.
+  let revision = cfg.revision || 0;
+  let banner = document.getElementById("moved-banner");
+
   function say(el, text, cls) {
     if (!el) return;
     el.textContent = text;
@@ -58,9 +64,34 @@
     }
   }
 
+  async function adopt() {
+    // Replace what the editor is showing with what the server now holds.
+    const res = await fetch(cfg.xmlUrl, { headers: { Accept: "application/json" } });
+    const doc = await res.json();
+    revision = doc.revision;
+    lastSent = doc.xml;   // adopting is not an edit: do not save it straight back
+    dirty = false;
+    post({ action: "load", xml: doc.xml, autosave: cfg.mode === "rw" ? 1 : 0 });
+    if (banner) banner.hidden = true;
+    say(statusEl, cfg.strings.reloaded, "");
+  }
+
+  function noticed(serverRevision) {
+    if (typeof serverRevision !== "number" || serverRevision <= revision) return;
+    // Somebody else wrote. With nothing unsaved this is not a decision worth
+    // interrupting anyone for -- take theirs. With unsaved work it is, so ask.
+    if (!dirty) {
+      adopt().catch(function () {});
+    } else if (banner) {
+      banner.hidden = false;
+    }
+  }
+
   async function takeLock(steal) {
     try {
-      paintLock(await api("/lock", { steal: !!steal }));
+      const state = await api("/lock", { steal: !!steal });
+      paintLock(state);
+      noticed(state.revision);
     } catch (e) {
       /* A failed refresh is not worth interrupting anyone over: the save path
          reports the truth, and an orphan version is not a lost one. */
@@ -90,6 +121,7 @@
         return;
       }
       dirty = false;
+      if (typeof out.revision === "number") revision = out.revision;
       say(statusEl, cfg.strings.saved, "ok");
       post({ action: "export", format: "png", spinKey: "export" });
     } catch (e) {
@@ -144,6 +176,18 @@
             type: "application/json",
           })
         );
+    });
+  }
+
+  if (banner) {
+    document.getElementById("moved-reload").addEventListener("click", function () {
+      adopt().catch(function () {});
+    });
+    document.getElementById("moved-dismiss").addEventListener("click", function () {
+      // Keeping yours is allowed and costs nothing: whatever it overwrites is
+      // already a version, so the other side is recoverable either way.
+      banner.hidden = true;
+      revision = Infinity;
     });
   }
 

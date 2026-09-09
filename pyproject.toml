@@ -4,8 +4,8 @@ version = "0.1.0"
 description = "draw.io diagrams inside the borant perimeter: per-user workspace, per-diagram share links, protected concurrent editing"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.115,<0.116",
-    "starlette>=0.41,<0.42",
+    "fastapi>=0.141",
+    "starlette>=1.6",
     "uvicorn[standard]>=0.30",
     "sqlalchemy>=2.0",
     "jinja2>=3.1",
@@ -13,13 +13,15 @@ dependencies = [
     "bcrypt>=4.1",
     "python-jose[cryptography]>=3.3",
     "httpx>=0.27",
+    "mcp>=2.0,<3",
 ]
 
-# fastapi and starlette are both pinned, and the pin on starlette is the one
-# that matters: Starlette 1.x broke the legacy TemplateResponse signature and
-# pinning fastapi alone does not hold starlette back, because fastapi's own
-# range is wide. Three repos were migrated the hard way before this was written
-# down.
+# Both floors are declared together, and they have to move together. Starlette
+# 1.x dropped the legacy TemplateResponse signature *and* the `on_startup`
+# argument FastAPI 0.115 still passes to Router, so the two halves of that pair
+# are the combination that breaks: an old FastAPI with a new Starlette fails at
+# import with a message about neither. Templates here already use the current
+# `TemplateResponse(request, name, ctx)` form.
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]

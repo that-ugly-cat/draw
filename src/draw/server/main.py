@@ -31,20 +31,27 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import or_
+from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy.orm import Session
 
 from . import locking, storage
 from .auth import (
     COOKIE,
     GateNotInFront,
+    check_api_key,
     create_token,
     gateway_mode,
     get_current_user,
     get_user_or_none,
+    set_caller,
     verify_password,
 )
 from .locales import DATE_FORMAT, DEFAULT, LANGUAGES, pick, t
-from .models import Diagram, DiagramVersion, ShareLink, User, get_db, init_db, utcnow
+from .mcp_app import mcp
+from .models import (
+    SessionLocal,
+    ApiKey, Diagram, DiagramVersion, ShareLink, User, get_db, init_db, utcnow,
+)
 
 log = logging.getLogger("draw.main")
 
@@ -61,6 +68,14 @@ PUBLIC_PATHS = [
     "/login",        # in gateway mode the app turns these away itself, rather
     "/logout",       # than bouncing off the gate to say something it knows
 ]
+
+# Not public — they carry a per-user key — but they must not go through the gate
+# either: they talk to programs, and a redirect to a login page is the last thing
+# an MCP client can handle. In the Caddy block they sit in the same matcher as
+# the public paths, which is what applies `noforge` to them: that snippet is
+# where X-Borant-* gets stripped, and it lives only on the branches that skip the
+# gate. The narrow form, never `/mcp*`: `/mcp/*` also covers `/mcp/k/{key}`.
+MACHINE_PATHS = ["/mcp", "/mcp/*"]
 
 # Where the gate ends a session, when there is a gate. Empty in standalone, and
 # empty is a working answer: with no value the app stops offering a sign-out it
@@ -81,12 +96,78 @@ async def lifespan(_app: FastAPI):
     why. Starting in the right shape costs nothing now and saves that.
     """
     init_db()
-    yield
+    # The session manager runs inside the **parent** app's lifespan: mounts do
+    # not propagate lifespans, and without this the transport answers 500
+    # without saying why.
+    async with mcp.session_manager.run():
+        yield
 
 
 app = FastAPI(title="draw", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=os.path.join(HERE, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(HERE, "templates"))
+
+PUBLIC_URL = os.environ.get("PUBLIC_URL", "http://localhost:8023")
+
+
+def _allowed_hosts() -> list[str]:
+    """Hosts the MCP transport will answer to.
+
+    It validates the Host header against DNS rebinding and refuses any name it
+    does not know. The symptom of forgetting PUBLIC_URL is a tool that looks
+    broken and a variable that is missing — and it does not show up testing from
+    the machine itself, because on 127.0.0.1 the same call works.
+    """
+    host = PUBLIC_URL.split("://", 1)[-1].rstrip("/")
+    return [host, "localhost", "127.0.0.1", f"localhost:{os.environ.get('PORT', '8023')}"]
+
+
+app.mount("/mcp", mcp.streamable_http_app(
+    streamable_http_path="/", json_response=True, stateless_http=True,
+    transport_security=TransportSecuritySettings(
+        allowed_hosts=_allowed_hosts(), allowed_origins=[PUBLIC_URL])))
+
+
+@app.middleware("http")
+async def api_key_gate(request: Request, call_next):
+    """Resolve the MCP caller, or refuse.
+
+    Two ways in, one table: the header is the normal path, and /mcp/k/{key}
+    carries the same key as a path segment for clients that cannot set headers.
+    In that form the key lands in access logs, which is why keys are per-client
+    and revocable.
+
+    The trailing-slash normalisation matters more than it looks: the endpoint we
+    advertise is the one WITHOUT the slash, a Starlette mount answers it with a
+    307, and MCP clients do not follow redirects on POST — behind TLS
+    termination it is worse, because the app does not know it is on https and
+    builds an http:// redirect.
+    """
+    path = request.url.path
+    if not path.startswith("/mcp"):
+        return await call_next(request)
+
+    if path.startswith("/mcp/k/"):
+        key, _, rest = path[len("/mcp/k/"):].partition("/")
+        request.scope["path"] = "/mcp/" + rest
+        request.scope["raw_path"] = request.scope["path"].encode()
+    else:
+        key = request.headers.get("X-API-Key", "")
+        if path == "/mcp":
+            request.scope["path"] = "/mcp/"
+            request.scope["raw_path"] = b"/mcp/"
+
+    db = SessionLocal()
+    try:
+        row = check_api_key(db, key)
+        set_caller(row.user if row else None)
+    finally:
+        db.close()
+    if not row:
+        # Read this body, do not count the number: with /mcp still inside the
+        # gate the same 401 arrives from Borant ID with a different body.
+        return JSONResponse({"error": "missing or invalid API key"}, status_code=401)
+    return await call_next(request)
 
 
 # --- rendering ----------------------------------------------------------------
@@ -274,7 +355,7 @@ def workspace(
             "user": user,
             "diagrams": diagrams,
             "binned": binned,
-            "lock_state": {d.id: locking.inspect(d, None, now) for d in diagrams},
+            "lock_state": {d.id: locking.inspect(d, None, user.id, now) for d in diagrams},
             "share_counts": {
                 d.id: sum(1 for s in d.share_links if s.is_live(now)) for d in diagrams
             },
@@ -426,6 +507,57 @@ def version_raw(
     )
 
 
+# --- MCP keys ------------------------------------------------------------------
+
+
+@app.get("/app/keys", response_class=HTMLResponse)
+def keys_page(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(ApiKey)
+        .filter(ApiKey.user_id == user.id)
+        .order_by(ApiKey.created_at.desc())
+        .all()
+    )
+    return render(request, "keys.html", {
+        "user": user, "keys": rows,
+        "endpoint": f"{PUBLIC_URL.rstrip('/')}/mcp",
+    })
+
+
+@app.post("/app/keys")
+def create_key(
+    label: str = Form(""),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    db.add(ApiKey(user_id=user.id, key=secrets.token_urlsafe(32),
+                  label=(label.strip() or "")[:80]))
+    db.commit()
+    return RedirectResponse("/app/keys", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/app/keys/{key_id}/revoke")
+def revoke_key(
+    key_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = (
+        db.query(ApiKey)
+        .filter(ApiKey.id == key_id, ApiKey.user_id == user.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    row.revoked_at = utcnow()
+    db.commit()
+    return RedirectResponse("/app/keys", status_code=status.HTTP_303_SEE_OTHER)
+
+
 # --- share links ---------------------------------------------------------------
 
 
@@ -520,9 +652,14 @@ def _apply_save(
     xml = storage.normalise(raw_xml)
     size = storage.check_size(xml)  # raises DiagramTooLarge; nothing is lost
     now = utcnow()
-    state = locking.inspect(d, session_id, now)
+    state = locking.inspect(d, session_id, user_id, now)
 
-    if state.held_by_other:
+    # Only another *person* is a conflict. The same person in a second session —
+    # a browser tab plus a script, most often — is one intent, and orphaning one
+    # half of it just hides the result somewhere they then have to look for.
+    # What that costs instead is handled on the client: whoever is holding the
+    # document open learns its revision moved and reloads.
+    if state.by_other_user:
         # The rule that makes level 1 safe. A save without a valid lock is never
         # thrown away: it is parked with the reason written down, and the client
         # is told which version it became. Worst case a merge by hand, never an
@@ -544,6 +681,7 @@ def _apply_save(
             "reason": "lock_held",
             "holder": state.label,
             "version": version.version_no if version else None,
+            "revision": d.revision,
         }
 
     if storage.should_version(d, db, now):
@@ -560,19 +698,38 @@ def _apply_save(
     d.size_bytes = size
     d.updated_at = now
     d.updated_by_label = label
-    locking.acquire(db, d, session_id, label, user_id, now=now)
+    # Every write moves the revision; `version_no` does not, because a version
+    # row is only cut on the debounce. The revision is what an open editor
+    # compares against to notice the document changed underneath it.
+    d.revision = (d.revision or 0) + 1
+    # Refresh rather than acquire: a writer must never take a lock away from
+    # another session of the same person just by saving.
+    locking.touch_if_ours(db, d, session_id, label, user_id, now=now)
     db.commit()
-    return {"ok": True, "version": d.version_no, "saved_at": now.isoformat()}
+    return {
+        "ok": True,
+        "version": d.version_no,
+        "revision": d.revision,
+        "saved_at": now.isoformat(),
+    }
 
 
-def _lock_payload(state: locking.LockState) -> dict:
+def _lock_payload(state: locking.LockState, d: Diagram) -> dict:
+    """The lock, plus the one number that answers "has it moved?".
+
+    The revision rides along on every lock refresh because the editor is already
+    asking, every thirty seconds, and adding a field to an answer costs nothing
+    next to opening a second channel to carry it.
+    """
     return {
         "held": state.held,
         "held_by_other": state.held_by_other,
+        "by_other_user": state.by_other_user,
         "label": state.label,
         "expires_at": state.expires_at.isoformat() if state.expires_at else None,
         "ttl": int(locking.LOCK_TTL.total_seconds()),
         "refresh": int(locking.REFRESH_EVERY.total_seconds()),
+        "revision": d.revision or 0,
     }
 
 
@@ -597,7 +754,7 @@ async def api_lock(
         steal=bool(body.get("steal")),
     )
     db.commit()
-    return _lock_payload(state)
+    return _lock_payload(state, d)
 
 
 @app.post("/api/d/{diagram_id}/unlock")
@@ -612,6 +769,17 @@ async def api_unlock(
     locking.release(db, d, body["session"])
     db.commit()
     return {"ok": True}
+
+
+@app.get("/api/d/{diagram_id}/xml")
+def api_xml(
+    diagram_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The current document, for an editor that has noticed it moved."""
+    d = _owned(db, diagram_id, user)
+    return {"xml": d.xml, "revision": d.revision or 0, "title": d.title}
 
 
 @app.post("/api/d/{diagram_id}/save")
@@ -756,7 +924,7 @@ async def guest_lock(token: str, request: Request, db: Session = Depends(get_db)
     )
     _touch(db, link)
     db.commit()
-    return _lock_payload(state)
+    return _lock_payload(state, d)
 
 
 @app.post("/s/{token}/unlock")
@@ -766,6 +934,12 @@ async def guest_unlock(token: str, request: Request, db: Session = Depends(get_d
     locking.release(db, d, body["session"])
     db.commit()
     return {"ok": True}
+
+
+@app.get("/s/{token}/xml")
+def guest_xml(token: str, db: Session = Depends(get_db)):
+    _link, d = _by_token(db, token)
+    return {"xml": d.xml, "revision": d.revision or 0, "title": d.title}
 
 
 @app.post("/s/{token}/save")

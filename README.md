@@ -37,6 +37,32 @@ downloads as a `.drawio` file.
 draw.io embeds as a data URI. The save is refused but the document stays open in
 the editor: nothing is lost.
 
+## The model-facing surface
+
+`/mcp`, with a per-user key made at **/app/keys**. It exists for one thing the
+web interface cannot do: authoring a diagram from a conversation, instead of
+writing .drawio XML blind and never seeing the result.
+
+The shape of it is decided by context cost rather than by capability. A real
+diagram is tens of thousands of tokens, so reading it whole to change one label
+is not a workflow — it is a budget. The pair that replaces that:
+
+- **`outline_diagram`** — every shape's id, text, position and size, at roughly
+  a tenth of the document. Usually all that is needed to decide what to change.
+- **`update_cells`** — change shapes by id, without rewriting the file. It
+  touches only what it names, so it cannot drop a page by accident.
+
+`get_diagram` and `update_diagram` remain for whole-document work, mostly
+creating one from nothing. Then **`check_diagram`**, which is what a writer who
+cannot see the page needs: labels that will not fit their shape, shapes
+overlapping their siblings, connectors pointing at cells that do not exist,
+empty pages. It says nothing about whether the diagram reads well.
+
+A write through the key is a save like any other. It goes through the same
+function the browser uses, so a guest holding the lock still turns it into an
+orphan version rather than losing it — but it never **takes** the lock, because
+a script that saves must not block the person who asked for the save.
+
 ## Two modes
 
 The app authenticates either way and neither mode is a degraded version of the

@@ -18,6 +18,16 @@
     {% endif %}
   </div>
 
+  {# Shown only when the document moved under an editor that has unsaved work.
+     When there is nothing unsaved the page just reloads, silently: that is the
+     common case, because autosave means "unsaved" lasts about a second. #}
+  <div id="moved-banner" class="flash" hidden style="margin:0;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <span>{{ t('moved_reload') }}</span>
+    <span style="flex:1"></span>
+    <button id="moved-reload" class="btn btn-small btn-primary">{{ t('reload_it') }}</button>
+    <button id="moved-dismiss" class="btn btn-small">{{ t('keep_mine') }}</button>
+  </div>
+
   {#
     The editor is served from the same host under /editor/, so the iframe is
     same-origin and no whitelist of origins has to be kept aligned. It never
@@ -37,6 +47,8 @@ window.DRAW = {
   thumbUrl: {{ ('/api/d/' ~ d.id ~ '/thumb') | tojson }},
   mode: {{ mode | tojson }},
   xml: {{ d.xml | tojson }},
+  xmlUrl: {{ (api_base ~ '/xml') | tojson }},
+  revision: {{ (d.revision or 0) | tojson }},
   lockRefresh: {{ lock.expires_at and 30 or 30 }},
   lock: {
     held: false,
@@ -50,7 +62,8 @@ window.DRAW = {
     lockFree: {{ t('lock_free') | tojson }},
     lockYours: {{ t('lock_yours') | tojson }},
     lockOther: {{ t('lock_other', who='{who}') | tojson }},
-    takeOverWarn: {{ t('take_over_warn') | tojson }}
+    takeOverWarn: {{ t('take_over_warn') | tojson }},
+    reloaded: {{ t('reloaded') | tojson }}
   }
 };
 </script>
