@@ -20,16 +20,20 @@ the day somebody adds a public route they notice while writing it.
 
 from __future__ import annotations
 
+import html
 import logging
 import os
+import re
 import secrets
 from contextlib import asynccontextmanager
+from pathlib import Path
 from datetime import timedelta
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
 from sqlalchemy import or_
 from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy.orm import Session
@@ -107,6 +111,28 @@ app = FastAPI(title="draw", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=os.path.join(HERE, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(HERE, "templates"))
 
+
+_EMPH = re.compile(r"\*\*(.+?)\*\*")
+_CODE = re.compile(r"`([^`]+)`")
+
+
+def _rich(text: str) -> Markup:
+    """Bold and code spans for dictionary strings, without markup in the
+    dictionary.
+
+    Translators should be reading sentences, not HTML, so the emphasis travels
+    as `**this**` and is turned into tags here. Escaped first and marked up
+    afterwards, in that order: the reverse would make any future string a way
+    to inject.
+    """
+    out = html.escape(text)
+    out = _EMPH.sub(r"<strong>\1</strong>", out)
+    out = _CODE.sub(r"<code>\1</code>", out)
+    return Markup(out)
+
+
+templates.env.filters["rich"] = _rich
+
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "http://localhost:8023")
 
 
@@ -170,6 +196,25 @@ async def api_key_gate(request: Request, call_next):
     return await call_next(request)
 
 
+def _asset_version() -> str:
+    """A stamp for the static URLs, taken from the newest file on disk.
+
+    Without it the fingerprint in every asset URL is a constant, which is worse
+    than having none: the CDN in front of this app caches static files for
+    hours, so a deploy fixes the CSS at the origin while every visitor keeps
+    being served the old one. The failure looks like a change that did not
+    happen, and it outlives the deploy that caused it.
+    """
+    newest = 0.0
+    for f in (Path(HERE) / "static").rglob("*"):
+        if f.is_file():
+            newest = max(newest, f.stat().st_mtime)
+    return str(int(newest))
+
+
+ASSETS = _asset_version()
+
+
 # --- rendering ----------------------------------------------------------------
 
 
@@ -188,6 +233,7 @@ def render(request: Request, name: str, ctx: dict | None = None) -> HTMLResponse
         # affordances only exist in one of them: the app owns the session in
         # local mode and does not in gateway mode, so it can offer sign-out in
         # the first case and only pass the request along in the second.
+        "asset_v": ASSETS,
         "gateway": gateway_mode(),
         "can_sign_out": (not gateway_mode()) or bool(GATE_LOGOUT_URL),
     }

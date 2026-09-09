@@ -144,3 +144,38 @@ input[type="text"]:focus, select:focus { outline: 1px solid var(--accent); }
 
 .linkbox { display: flex; gap: 8px; align-items: center; }
 .linkbox input { flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-size: 12px; }
+
+/* Landing page, on the shape contrarian uses: a lead, three pillars, and
+   explainers that open. The pillars carry what is distinctive rather than what
+   is impressive, and the two <details> tell the same story twice — once in
+   plain words, once for somebody who wants the mechanism. */
+.pillars { display: flex; flex-direction: column; gap: 18px; max-width: 620px; margin: 26px 0 8px; }
+.pillar { display: flex; gap: 14px; align-items: flex-start; }
+.pillar-icon {
+  flex-shrink: 0; width: 34px; height: 34px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-ctl);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 700; color: var(--accent);
+}
+.pillar-text { min-width: 0; }
+.pillar-text strong { display: block; color: var(--text); font-size: 14px; margin-bottom: 3px; }
+.pillar-text span { font-size: 13px; color: var(--muted); line-height: 1.55; }
+
+.explainers { display: flex; flex-direction: column; gap: 10px; margin: 30px 0 8px; }
+.explainer { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); }
+.explainer[open] { border-color: var(--accent); }
+.explainer summary {
+  padding: 12px 16px; cursor: pointer; font-size: 14px; font-weight: 600;
+  display: flex; align-items: baseline; gap: 10px; list-style: none;
+}
+.explainer summary::-webkit-details-marker { display: none; }
+.explainer summary::before { content: "\25B8"; color: var(--muted); font-size: 12px; }
+.explainer[open] summary::before { content: "\25BE"; }
+.explainer summary:hover { color: var(--accent); }
+.explainer .body { padding: 2px 18px 16px 32px; }
+.explainer .body p { font-size: 13.5px; color: var(--text); line-height: 1.7; margin: 12px 0; max-width: 62ch; }
+.explainer .body strong { color: var(--text); }
+.explainer .body code {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  padding: 1px 5px; font-size: 12px;
+}

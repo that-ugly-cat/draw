@@ -1,17 +1,56 @@
 {% extends "base.html" %}
 {#
-  The showcase never looks at who is reading it. Identity headers are stripped
-  on the public branch, so a `{% raw %}{% if user %}{% endraw %}` here would be
-  always false with the gate and sometimes true without it — the same page with
-  two behaviours. Not looking, it is identical in both modes, and one button
-  covers all four cases: gated or standalone, already signed in or not.
+  The showcase never looks at who is reading it. Identity headers are stripped on
+  the public branch, so a check on the user here would be always false with the
+  gate and sometimes true without it — the same page with two behaviours. Not
+  looking, it is identical in both modes, and one button covers all four cases.
 
   The button points at /app, which is gated, and never at /login.
 #}
 {% block body %}
 <div class="container">
   <h1>{{ t('tagline') }}</h1>
-  <p class="lead">{{ t('showcase_lead') }}</p>
-  <p><a class="btn btn-primary" href="/app">{{ t('enter') }}</a></p>
+  <p class="lead">{{ t('land_lead') }}</p>
+
+  <div class="pillars">
+    <div class="pillar">
+      <div class="pillar-icon">&#8630;</div>
+      <div class="pillar-text"><strong>{{ t('p1_title') }}</strong>
+      <span>{{ t('p1_body') }}</span></div>
+    </div>
+    <div class="pillar">
+      <div class="pillar-icon">&#8599;</div>
+      <div class="pillar-text"><strong>{{ t('p2_title') }}</strong>
+      <span>{{ t('p2_body') }}</span></div>
+    </div>
+    <div class="pillar">
+      <div class="pillar-icon">&#9635;</div>
+      <div class="pillar-text"><strong>{{ t('p3_title') }}</strong>
+      <span>{{ t('p3_body') }}</span></div>
+    </div>
+  </div>
+
+  <p style="margin:26px 0 0"><a class="btn btn-primary" href="/app">{{ t('enter') }}</a></p>
+
+  <div class="explainers">
+    <details class="explainer">
+      <summary><span class="badge">{{ t('plain_words') }}</span> {{ t('plain_title') }}</summary>
+      <div class="body">
+        <p>{{ t('plain_1') | rich }}</p>
+        <p>{{ t('plain_2') | rich }}</p>
+        <p>{{ t('plain_3') | rich }}</p>
+        <p>{{ t('plain_4') | rich }}</p>
+      </div>
+    </details>
+    <details class="explainer">
+      <summary><span class="badge">{{ t('geek_mode') }}</span> {{ t('geek_title') }}</summary>
+      <div class="body">
+        <p>{{ t('geek_1') | rich }}</p>
+        <p>{{ t('geek_2') | rich }}</p>
+        <p>{{ t('geek_3') | rich }}</p>
+        <p>{{ t('geek_4') | rich }}</p>
+      </div>
+    </details>
+  </div>
 </div>
 {% endblock %}
