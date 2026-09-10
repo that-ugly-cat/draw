@@ -66,6 +66,7 @@ PUBLIC_PATHS = [
     "/",             # the showcase, which never looks at its reader
     "/healthz",
     "/static/*",
+    "/guide",        # the user guide: read by people deciding whether to ask
     "/lang/*",
     "/editor/*",     # the drawio container, reached by Caddy, never by this app
     "/s/*",          # the guest surface, authorised by a token and not identity
