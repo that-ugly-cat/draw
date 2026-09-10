@@ -30,7 +30,7 @@ orphan, with the reason written down, and whoever saved is told which version
 number it became. The worst case is a merge by hand.
 
 **Versions.** The current document is overwritten on every autosave; versions
-are created after five minutes of activity, on close, and on every orphan save.
+are created after five minutes of activity and on every orphan save.
 They can be pinned, and pinned ones are never thinned out. Each version
 downloads as a `.drawio` file.
 
