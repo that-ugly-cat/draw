@@ -94,7 +94,10 @@ def test_a_different_person_still_orphans(client, diagram_id):
     token = _token(diagram_id, "rw")
 
     guest = TestClient(app)
-    guest.cookies.set("guest_name", "Someone else")
+    # Through the app's own form rather than by planting a cookie: the name is
+    # kept in a cookie scoped to this link, and the route is what knows the name
+    # of it.
+    guest.post(f"/s/{token}/name", data={"name": "Someone else"}, follow_redirects=False)
     out = guest.post(f"/s/{token}/save", json={"session": "guest-1", "xml": XML_B}).json()
     assert out["ok"] is False
     assert out["reason"] == "lock_held"
@@ -441,3 +444,200 @@ def test_the_keys_link_never_reaches_a_guest_or_the_showcase(client, diagram_id)
     anon = TestClient(app)
     assert "/app/keys" not in anon.get("/").text
     assert "/app/keys" not in anon.get(f"/s/{token}").text
+
+
+# --- retention ---------------------------------------------------------------
+#
+# Both of these are tests of a *caller*. The policy was implemented and never
+# run: `storage.thin` had no caller anywhere in the tree, and `deleted_at` was
+# only ever set and cleared, so the two things the documentation promised — a
+# history that thins, a bin that holds for thirty days — were both sentences.
+
+
+def _version(db, diagram_id: int, tag: str, when, *, pinned=False, orphan=False):
+    """A version row at an arbitrary age. `tag` doubles as the content hash."""
+    from draw.server.models import DiagramVersion
+
+    db.add(
+        DiagramVersion(
+            diagram_id=diagram_id,
+            version_no=abs(hash(tag)) % 100000,
+            sha256=tag,
+            xml_z=storage.compress(tag),
+            size_bytes=len(tag),
+            created_at=when,
+            pinned=pinned,
+            orphan=orphan,
+        )
+    )
+
+
+def test_the_retention_pass_thins_the_history(client):
+    """Everything for a day, then one an hour for a week, then one a day.
+
+    The timestamps are pinned to the middle of an hour and of a day on purpose:
+    built by subtracting minutes from "now" they would fall either side of an
+    hour boundary depending on what time the suite runs, which is a test that
+    fails once a day for no reason.
+    """
+    from datetime import timedelta
+
+    from draw.server.models import Diagram, DiagramVersion, utcnow
+
+    db = SessionLocal()
+    try:
+        me = db.query(User).filter(User.email == "t@example.org").first()
+        d = Diagram(owner_id=me.id, title="Retention", xml=XML_A,
+                    size_bytes=len(XML_A))
+        db.add(d)
+        db.commit()
+
+        now = utcnow()
+        hour = (now - timedelta(days=3)).replace(minute=30, second=0, microsecond=0)
+        day = (now - timedelta(days=21)).replace(hour=12, minute=0, second=0,
+                                                 microsecond=0)
+        for i in range(3):
+            _version(db, d.id, f"hourly-{i}", hour + timedelta(minutes=i))
+        for i in range(2):
+            _version(db, d.id, f"daily-{i}", day + timedelta(hours=i))
+        _version(db, d.id, "pinned", day, pinned=True)
+        _version(db, d.id, "orphan", day, orphan=True)
+        _version(db, d.id, "fresh", now - timedelta(hours=2))
+        db.commit()
+
+        out = storage.sweep(db, now=now)
+        kept = {
+            v.sha256
+            for v in db.query(DiagramVersion)
+                       .filter(DiagramVersion.diagram_id == d.id).all()
+        }
+    finally:
+        db.close()
+
+    # Three in one old hour and two in one old day collapse to one each.
+    assert len([k for k in kept if k.startswith("hourly-")]) == 1
+    assert len([k for k in kept if k.startswith("daily-")]) == 1
+    assert out["thinned"] >= 3
+    # Never touched, whatever their age: a pin is a promise, and an orphan is
+    # the record of a conflict somebody may still have to resolve.
+    assert {"pinned", "orphan", "fresh"} <= kept
+
+
+def test_the_retention_pass_purges_the_bin_after_the_documented_window(client):
+    """The bin is a grace period, which means something has to end it.
+
+    README, the MCP tool's docstring and SPEC §3 all say thirty days. The
+    diagram goes, and so do its versions and its links: a purge that emptied the
+    list and left the content would keep the promise on the page only.
+    """
+    from datetime import timedelta
+
+    from draw.server.models import Diagram, DiagramVersion, ShareLink, utcnow
+
+    db = SessionLocal()
+    try:
+        me = db.query(User).filter(User.email == "t@example.org").first()
+        now = utcnow()
+        old = Diagram(owner_id=me.id, title="Long gone", xml=XML_A,
+                      size_bytes=len(XML_A),
+                      deleted_at=now - storage.BIN_KEEP - timedelta(days=1))
+        recent = Diagram(owner_id=me.id, title="Binned yesterday", xml=XML_A,
+                         size_bytes=len(XML_A), deleted_at=now - timedelta(days=1))
+        db.add_all([old, recent])
+        db.commit()
+        old_id, recent_id = old.id, recent.id
+        _version(db, old_id, "gone-with-it", now - timedelta(days=40))
+        db.add(ShareLink(diagram_id=old_id, token="purge-me", mode="ro"))
+        db.commit()
+
+        out = storage.sweep(db, now=now)
+
+        assert out["purged"] == 1
+        assert db.query(Diagram).filter(Diagram.id == old_id).first() is None
+        assert db.query(DiagramVersion).filter(
+            DiagramVersion.diagram_id == old_id).count() == 0
+        assert db.query(ShareLink).filter(ShareLink.token == "purge-me").first() is None
+        # and a click from yesterday is still recoverable
+        assert db.query(Diagram).filter(Diagram.id == recent_id).first() is not None
+    finally:
+        db.close()
+
+
+# --- affordances -------------------------------------------------------------
+
+
+def test_the_guest_name_is_asked_once_per_link(client, diagram_id):
+    """Once per link, not once per browser.
+
+    With one cookie for the whole host, whoever named themselves on one
+    read-write link arrived pre-named on every link they opened afterwards —
+    including a link from a different owner, who then saw a name nobody had
+    given them.
+    """
+    client.post(f"/app/d/{diagram_id}/links", data={"mode": "rw", "label": "one",
+                "days": ""}, follow_redirects=True)
+    first = _token(diagram_id, "rw")
+    client.post(f"/app/d/{diagram_id}/links", data={"mode": "rw", "label": "two",
+                "days": ""}, follow_redirects=True)
+    second = _token(diagram_id, "rw")
+    assert first != second
+
+    guest = TestClient(app)
+    assert guest.post(f"/s/{first}/name", data={"name": "Ada"},
+                      follow_redirects=False).status_code == 303
+    # named on the link it was given on: straight into the editor
+    assert "editor-frame" in guest.get(f"/s/{first}").text
+    # and asked again on the other one
+    other = guest.get(f"/s/{second}").text
+    assert "editor-frame" not in other
+    assert "Ada" not in other
+
+
+def test_rename_is_offered_by_the_workspace_and_not_only_by_the_route(client, diagram_id):
+    """The handler is not the surface.
+
+    `POST /app/d/{id}/rename` worked from the first commit, `rename` was in the
+    dictionary, and no template rendered either — so renaming was possible only
+    through a chat client while the README said the workspace could do it.
+    """
+    page = client.get("/app").text
+    assert f'action="/app/d/{diagram_id}/rename"' in page
+    assert ">Rinomina<" in page or ">Rename<" in page
+
+    r = client.post(f"/app/d/{diagram_id}/rename", data={"title": "Renamed by hand"},
+                    follow_redirects=False)
+    assert r.status_code == 303
+    assert "Renamed by hand" in client.get("/app").text
+
+
+def test_the_lock_refresh_interval_comes_from_the_locking_module(client, diagram_id):
+    """One number, one place. The template used to carry `30 or 30`."""
+    from draw.server import locking
+
+    page = client.get(f"/app/d/{diagram_id}").text
+    assert f"lockRefresh: {int(locking.REFRESH_EVERY.total_seconds())}" in page
+
+
+def test_the_retention_pass_is_wired_to_the_app_starting(monkeypatch):
+    """The half that was missing was never the policy, it was the caller.
+
+    So this asserts the wiring and not the thinning: with the app started —
+    which is what a `with` around the client does, and what the rest of the
+    suite skips — a pass happens on its own, off the request path, with nobody
+    having asked for one.
+    """
+    import time
+    from datetime import timedelta
+
+    from draw.server import main as m
+
+    ran = []
+    monkeypatch.setattr(storage, "FIRST_SWEEP_AFTER", timedelta(0))
+    monkeypatch.setattr(m, "_sweep_once", lambda: ran.append(1) or {"thinned": 0})
+
+    with TestClient(app):
+        deadline = time.monotonic() + 5
+        while not ran and time.monotonic() < deadline:
+            time.sleep(0.05)
+
+    assert ran, "no retention pass ran in the five seconds after startup"

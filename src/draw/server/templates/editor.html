@@ -49,7 +49,9 @@ window.DRAW = {
   xml: {{ d.xml | tojson }},
   xmlUrl: {{ (api_base ~ '/xml') | tojson }},
   revision: {{ (d.revision or 0) | tojson }},
-  lockRefresh: {{ lock.expires_at and 30 or 30 }},
+  {# Seconds, from locking.REFRESH_EVERY: the TTL and the refresh interval are
+     one decision, and a number written out here would be a second copy of it. #}
+  lockRefresh: {{ lock_refresh | tojson }},
   lock: {
     held: false,
     held_by_other: {{ lock.held_by_other | tojson }},

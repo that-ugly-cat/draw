@@ -15,6 +15,7 @@ import base64
 import hashlib
 import logging
 import re
+import threading
 import urllib.parse
 import zlib
 from datetime import datetime, timedelta
@@ -186,9 +187,32 @@ def snapshot(
 
 
 # --- retention ---------------------------------------------------------------
+#
+# The policy was written down in three places — SPEC.md §7, the README, the copy
+# on the showcase — and had no caller anywhere: `thin` existed and nothing ran
+# it, and `deleted_at` was only ever set and cleared, so the bin that says it
+# holds for thirty days held for ever. `sweep` is the pass that makes those
+# sentences true, and `main.lifespan` is what runs it.
 
 KEEP_ALL = timedelta(hours=24)
 KEEP_HOURLY_FOR = timedelta(days=7)
+
+# What the bin promises, in README, in `mcp_app.delete_diagram`'s own docstring
+# and in SPEC.md §3. The number lives here now, so a change moves one constant
+# rather than three sentences.
+BIN_KEEP = timedelta(days=30)
+
+# Nightly, as SPEC.md §7 asks, and once shortly after startup so a pass happens
+# on a box that gets restarted more often than it stays up for a day. The
+# granularity is a day because the policy's own is: everything for 24 hours,
+# then one an hour, then one a day.
+SWEEP_EVERY = timedelta(hours=24)
+FIRST_SWEEP_AFTER = timedelta(minutes=2)
+
+# One pass at a time in this process. Two at once is not corruption — the
+# deletes are the outcome both of them want — but it is wasted work, and the
+# guard is two lines.
+_SWEEP_LOCK = threading.Lock()
 
 
 def thin(db: Session, diagram_id: int, now: datetime | None = None) -> int:
@@ -198,8 +222,8 @@ def thin(db: Session, diagram_id: int, now: datetime | None = None) -> int:
     per day. Pinned versions are never touched, and neither are orphans: an
     orphan is the record of a conflict somebody may still need to resolve.
 
-    Note for whoever runs this: SQLite does not return the space on its own.
-    Thinning without a periodic VACUUM is a policy that exists on paper.
+    One diagram at a time, and it does not commit: `sweep` is the caller that
+    walks the whole table and decides the transaction boundaries.
     """
     now = now or utcnow()
     rows = (
@@ -230,3 +254,70 @@ def thin(db: Session, diagram_id: int, now: datetime | None = None) -> int:
         else:
             seen_buckets.add(bucket)
     return removed
+
+
+def purge_bin(db: Session, now: datetime | None = None) -> int:
+    """Delete the diagrams binned longer than `BIN_KEEP`. Returns how many.
+
+    The bin was documented as a grace period and implemented as an archive:
+    `deleted_at` was set by the delete route and cleared by restore, and nothing
+    ever looked at it again. Deleting the diagram row takes its versions, its
+    share links and its thumbnail with it, because those relationships cascade —
+    which is the point. A purge that emptied the list and left the content
+    behind would keep the promise on the page and break it in the database.
+
+    Restoring is the escape hatch and it stays open for the whole window: what
+    is deleted here has been in the bin for a month.
+    """
+    cutoff = (now or utcnow()) - BIN_KEEP
+    rows = (
+        db.query(Diagram)
+        .filter(Diagram.deleted_at.isnot(None), Diagram.deleted_at <= cutoff)
+        .all()
+    )
+    for row in rows:
+        log.info("purging diagram %s, binned %s", row.id, row.deleted_at)
+        db.delete(row)
+    return len(rows)
+
+
+def sweep(db: Session, now: datetime | None = None) -> dict:
+    """One retention pass: thin every history, then purge the bin.
+
+    Called from a background task in the app's lifespan and never from a
+    handler. That is not fastidiousness: thinning walks every version row of
+    every diagram, and a save that waited for it would be a save somebody feels.
+
+    Committed diagram by diagram, so a failure on one costs that one and not the
+    whole pass, and so a long pass does not hold a single write transaction open
+    for its duration. A row a concurrent pass already deleted is not an error
+    worth stopping for.
+
+    Note for whoever reads the numbers: SQLite does not return the space on its
+    own. Thinning without a periodic `VACUUM` frees rows, not bytes.
+    """
+    if not _SWEEP_LOCK.acquire(blocking=False):
+        log.info("retention: a pass is already running, skipping this one")
+        return {"diagrams": 0, "thinned": 0, "purged": 0, "skipped": True}
+    try:
+        now = now or utcnow()
+        ids = [row[0] for row in db.query(Diagram.id).all()]
+        thinned = 0
+        for diagram_id in ids:
+            try:
+                thinned += thin(db, diagram_id, now)
+                db.commit()
+            except Exception:
+                db.rollback()
+                log.exception("retention: thinning diagram %s failed", diagram_id)
+        try:
+            purged = purge_bin(db, now)
+            db.commit()
+        except Exception:
+            db.rollback()
+            log.exception("retention: purging the bin failed")
+            purged = 0
+        return {"diagrams": len(ids), "thinned": thinned, "purged": purged,
+                "skipped": False}
+    finally:
+        _SWEEP_LOCK.release()

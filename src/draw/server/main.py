@@ -20,6 +20,8 @@ the day somebody adds a public route they notice while writing it.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import html
 import logging
 import os
@@ -33,6 +35,7 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response, st
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 from markupsafe import Markup
 from sqlalchemy import or_
 from mcp.server.transport_security import TransportSecuritySettings
@@ -89,23 +92,68 @@ MACHINE_PATHS = ["/mcp", "/mcp/*"]
 GATE_LOGOUT_URL = os.environ.get("GATE_LOGOUT_URL", "").strip()
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# The prefix of the guest-name cookies. One cookie per share link and never one
+# for the host: see `_guest_cookie`.
 GUEST_NAME_COOKIE = "guest_name"
+
+
+def _sweep_once() -> dict:
+    """One retention pass, with a session of its own.
+
+    Its own session and not a request's: it belongs to nobody's request, and it
+    outlives any of them.
+    """
+    db = SessionLocal()
+    try:
+        return storage.sweep(db)
+    finally:
+        db.close()
+
+
+async def _retention_loop() -> None:
+    """The nightly job SPEC.md §7 asks for, run from here rather than from cron.
+
+    It had no home at all until now: `storage.thin` had no caller anywhere, so
+    the history the showcase says thins never thinned and the bin the README
+    says holds for thirty days held for ever. Here instead of in a handler
+    because a pass walks every version row of every diagram, and here instead of
+    in a crontab because a job that lives outside the image is a job that gets
+    lost on the next machine.
+
+    In a worker thread, not on the event loop: the pass is synchronous SQLite
+    work, and on the loop it would stall every request for as long as it ran.
+    And the loop survives its own failures — a retention pass that dies at
+    three in the morning must not take the next one with it.
+    """
+    await asyncio.sleep(storage.FIRST_SWEEP_AFTER.total_seconds())
+    while True:
+        try:
+            log.info("retention: %s", await run_in_threadpool(_sweep_once))
+        except Exception:
+            log.exception("retention pass failed")
+        await asyncio.sleep(storage.SWEEP_EVERY.total_seconds())
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """A lifespan, not on_event.
 
-    Nothing needs it yet, but the day an MCP surface is mounted here its session
-    manager has to run inside the *parent* app's lifespan: mounts do not
-    propagate lifespans, and without it the transport answers 500 without saying
-    why. Starting in the right shape costs nothing now and saves that.
+    Two things need it. The MCP session manager has to run inside the *parent*
+    app's lifespan: mounts do not propagate lifespans, and without it the
+    transport answers 500 without saying why. And the retention pass hangs off
+    it, which is what keeps it out of every request path.
     """
     init_db()
+    retention = asyncio.create_task(_retention_loop())
     # The session manager runs inside the **parent** app's lifespan: mounts do
     # not propagate lifespans, and without this the transport answers 500
     # without saying why.
-    async with mcp.session_manager.run():
-        yield
+    try:
+        async with mcp.session_manager.run():
+            yield
+    finally:
+        retention.cancel()
 
 
 app = FastAPI(title="draw", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -468,6 +516,10 @@ def editor(
             "mode": "rw",
             "api_base": f"/api/d/{d.id}",
             "lock": locking.inspect(d, None),
+            # How often the page refreshes the lock, from the one place that
+            # decides it. The page used to carry the number written out twice,
+            # in a conditional whose branches were both 30.
+            "lock_refresh": int(locking.REFRESH_EVERY.total_seconds()),
             "editor_url": os.environ.get("EDITOR_URL", "/editor/"),
         },
     )
@@ -922,6 +974,24 @@ def thumb(
 # belong here: it moves under the gated prefix. It is not carved out by method.
 
 
+def _guest_cookie(token: str) -> str:
+    """The cookie that holds a guest's name, scoped to one share link.
+
+    It used to be a single `guest_name` for the whole host, which made a label
+    given on one link arrive pre-filled on every other link opened in that
+    browser afterwards — including links from a different owner, who then saw a
+    name nobody had given them. The name belongs to the link and not to the
+    browser, so the cookie is keyed on the link: asked once per link.
+
+    Two details. The key is a digest of the token rather than the token, because
+    a cookie name is not a place the capability needs to be written a second
+    time. And it is set with `path=/s/{token}`, so the browser does not even
+    send it anywhere else — which is also why the old host-wide cookie, still
+    sitting in browsers until it expires, is no longer read by anything.
+    """
+    return f"{GUEST_NAME_COOKIE}_{hashlib.sha256(token.encode()).hexdigest()[:16]}"
+
+
 def _by_token(db: Session, token: str) -> tuple[ShareLink, Diagram]:
     link = db.query(ShareLink).filter(ShareLink.token == token).first()
     if not link or not link.is_live():
@@ -942,9 +1012,10 @@ def guest(token: str, request: Request, db: Session = Depends(get_db)):
     link, d = _by_token(db, token)
     _touch(db, link)
     db.commit()
-    name = request.cookies.get(GUEST_NAME_COOKIE)
+    name = request.cookies.get(_guest_cookie(token))
     if link.mode == "rw" and not name:
-        # A label, asked once. Not an identity, and the page says so.
+        # A label, asked once for this link. Not an identity, and the page
+        # says so.
         return render(request, "guest_name.html", {"token": token, "d": d})
     return render(
         request,
@@ -956,6 +1027,7 @@ def guest(token: str, request: Request, db: Session = Depends(get_db)):
             "guest_label": name,
             "api_base": f"/s/{token}",
             "lock": locking.inspect(d, None),
+            "lock_refresh": int(locking.REFRESH_EVERY.total_seconds()),
             "editor_url": os.environ.get("EDITOR_URL", "/editor/"),
         },
     )
@@ -966,16 +1038,17 @@ def guest_name(token: str, name: str = Form(...), db: Session = Depends(get_db))
     _by_token(db, token)
     resp = RedirectResponse(f"/s/{token}", status_code=status.HTTP_303_SEE_OTHER)
     resp.set_cookie(
-        GUEST_NAME_COOKIE,
+        _guest_cookie(token),
         (name.strip() or "Guest")[:60],
         max_age=31536000,
         samesite="lax",
+        path=f"/s/{token}",
     )
     return resp
 
 
-def _guest_label(request: Request) -> str:
-    return (request.cookies.get(GUEST_NAME_COOKIE) or "Guest")[:60]
+def _guest_label(request: Request, token: str) -> str:
+    return (request.cookies.get(_guest_cookie(token)) or "Guest")[:60]
 
 
 @app.post("/s/{token}/lock")
@@ -988,7 +1061,7 @@ async def guest_lock(token: str, request: Request, db: Session = Depends(get_db)
         db,
         d,
         body["session"],
-        _guest_label(request),
+        _guest_label(request, token),
         None,
         steal=bool(body.get("steal")),
     )
@@ -1024,7 +1097,7 @@ async def guest_save(token: str, request: Request, db: Session = Depends(get_db)
         d,
         body.get("xml", ""),
         body["session"],
-        label=_guest_label(request),
+        label=_guest_label(request, token),
         user_id=None,
         origin="share",
         share_link_id=link.id,

@@ -12,7 +12,8 @@ in the server.
 ## Using it
 
 Every diagram belongs to a person. From the workspace you create, open, rename
-and bin them; the bin holds for 30 days.
+and bin them; the bin holds for 30 days, and what is still in it after that is
+deleted for good by the retention pass.
 
 **Sharing.** Each diagram takes any number of links, read-only or read-write,
 each with a label, an optional expiry and a revoke button. The table shows
@@ -32,6 +33,13 @@ number it became. The worst case is a merge by hand.
 are created after five minutes of activity, on close, and on every orphan save.
 They can be pinned, and pinned ones are never thinned out. Each version
 downloads as a `.drawio` file.
+
+**Retention** is a pass the app runs itself, daily, in the background: it keeps
+everything from the last 24 hours, then one version an hour for a week, then one
+a day, and it empties the bin of whatever has been in it for 30 days. Pinned
+versions and orphans are never touched. Nothing to install on the host, and no
+request ever waits for it — `DEPLOY.md` says what it logs and what it does not
+reclaim.
 
 **Limit: 10 MB per diagram.** What usually trips it is a pasted image, which
 draw.io embeds as a data URI. The save is refused but the document stays open in

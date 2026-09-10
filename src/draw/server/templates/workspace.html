@@ -25,6 +25,20 @@
         <span class="spacer" style="flex:1"></span>
         <a class="btn btn-small" href="/app/d/{{ d.id }}/links">{{ t('share') }}</a>
         <a class="btn btn-small" href="/app/d/{{ d.id }}/versions">{{ t('versions') }}</a>
+        {#
+          Rename: the route has always existed and no page offered it, so the
+          only way to rename a diagram was through a chat client. A prompt
+          rather than a field, because the title on a tile is already the link
+          to the diagram and an always-open input would cost every card a text
+          box for a thing done twice a year. With scripting off the form posts
+          the title it already carries, which is a no-op and not a wipe.
+        #}
+        <form method="post" action="/app/d/{{ d.id }}/rename" style="display:inline"
+              data-ask="{{ t('rename_ask') }}"
+              onsubmit="var v = prompt(this.dataset.ask, this.elements.title.value); if (!v) return false; this.elements.title.value = v;">
+          <input type="hidden" name="title" value="{{ d.title }}">
+          <button class="btn btn-small" type="submit">{{ t('rename') }}</button>
+        </form>
         <form method="post" action="/app/d/{{ d.id }}/delete" style="display:inline">
           <button class="btn btn-small btn-danger" type="submit">{{ t('delete') }}</button>
         </form>

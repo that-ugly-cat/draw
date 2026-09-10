@@ -26,10 +26,10 @@ The language switcher in the top bar offers Italian, English, German and French.
 
 `/app` is the whole of what you can see: every diagram you own, newest change first, and nothing else.
 
-- **Create** one with the box at the top. Give it a title there — an empty title becomes *Untitled*, and titles are cut at 200 characters. There is no rename button in the web app today: a chat client can rename (§8), otherwise name it when you create it.
+- **Create** one with the box at the top. Give it a title there — an empty title becomes *Untitled*, and titles are cut at 200 characters. **Rename** on the tile asks for a new title and takes it; a chat client can rename too (§8).
 - Each tile carries a **thumbnail**, produced by your own browser after a save and posted back — which is why a brand-new diagram shows an empty tile until you have drawn something and it has saved.
 - A tile shows a warning badge when somebody else is editing that diagram, and a count of its live share links.
-- **Delete** moves the diagram to the **bin** at the bottom of the page, where **Restore** brings it back — one click should not be final. The bin is a grace period and not a second archive: take out of it anything you mean to keep.
+- **Delete** moves the diagram to the **bin** at the bottom of the page, where **Restore** brings it back — one click should not be final. The bin is a grace period and not a second archive: what has been in it for **30 days** is deleted for good, with its versions and its share links, so take out of it anything you mean to keep.
 
 ## 4. Drawing, and how saving works
 
@@ -66,7 +66,7 @@ The current document is overwritten by every autosave; the history is a separate
 
 `/app/d/{id}/versions` lists the most recent 200, with the version number, the time, who saved it, and a badge on orphans carrying the reason they were parked.
 
-- **Pin** anything you might need to point at later. The retention policy keeps everything from the last day, then one version an hour for a week, then one a day — and it never touches a pinned version, nor an orphan, because an orphan is the record of a conflict somebody may still have to resolve.
+- **Pin** anything you might need to point at later. The retention policy keeps everything from the last day, then one version an hour for a week, then one a day — and it never touches a pinned version, nor an orphan, because an orphan is the record of a conflict somebody may still have to resolve. It is applied by a pass the app runs once a day, so thinning happens on its own rather than when somebody remembers.
 - Every version downloads as a **`.drawio` file**, which opens in any draw.io.
 
 There is no one-click restore of an old version. To bring one back you download it and open it, or you use a chat client to read that version and write it back as the current document (§8). Merging two versions is human work, and the tool promises exactly what it can keep: nothing is lost, not that nothing has to be reconciled.
@@ -85,7 +85,7 @@ From `/app/d/{id}/links` you make as many links as you want:
 
 The table shows each live link's URL (click to select it), its mode, its expiry, and **last used** with a use count. That last column is the one that makes managing links real rather than nominal: without it, six months in there is a list of links and no way to tell which anyone still needs, so nobody revokes any. **Revoke** kills a link immediately; a revoked or expired link answers *not found*, and so does one whose diagram is in the bin.
 
-Somebody arriving through a read-write link is asked, once per browser, for a name. That name is **a label and not an identity**: it is used to show who is working and to attribute versions, it is not verified, and nothing is authorised by it. The token authorises; identity never enters that side of the app at all, by construction.
+Somebody arriving through a read-write link is asked, once per link, for a name — the answer is remembered for that link alone, so a name given on one link never arrives pre-filled on somebody else's. That name is **a label and not an identity**: it is used to show who is working and to attribute versions, it is not verified, and nothing is authorised by it. The token authorises; identity never enters that side of the app at all, by construction.
 
 **What a guest cannot do:** anything except open and save. No version history, no link list, no creating or revoking links, no deleting, no renaming, and no sight of the rest of your workspace. Management verbs live only on the owner's side. A guest holding the lock does count as another person, so a save of yours arriving under it becomes an orphan version.
 

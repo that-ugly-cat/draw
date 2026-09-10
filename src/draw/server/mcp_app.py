@@ -445,7 +445,11 @@ def rename_diagram(diagram_id: int, title: str) -> dict:
 
 @mcp.tool()
 def delete_diagram(diagram_id: int) -> dict:
-    """Move to the bin, which holds for thirty days. Not a purge."""
+    """Move to the bin, which holds for thirty days. Not a purge.
+
+    Thirty days is the retention pass, not a figure of speech: after that the
+    diagram is deleted along with its versions and its links.
+    """
     db = SessionLocal()
     try:
         d = _mine(db, diagram_id)

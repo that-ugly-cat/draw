@@ -187,8 +187,20 @@ gated route.
 
 ## Maintenance
 
-Thinning the version history does not return the disk space on its own. After a
-prune, or periodically:
+**Retention runs inside the app, not from a crontab.** A background pass started
+by the app's lifespan, two minutes after startup and every 24 hours after that.
+It thins the version history — everything from the last 24 hours, then one an
+hour for a week, then one a day, never a pinned version and never an orphan —
+and it deletes the diagrams that have been in the bin longer than 30 days, with
+their versions and their share links. Nothing to install on the host, and it
+runs in a worker thread, so no request waits for it. One line per pass:
+
+```bash
+docker logs draw | grep retention
+```
+
+Thinning frees rows, not bytes: SQLite does not return the disk space on its
+own. After a pass that removed a lot, or periodically:
 
 ```bash
 docker exec draw python -c "from draw.server.models import engine; engine.raw_connection().execute('VACUUM')"
