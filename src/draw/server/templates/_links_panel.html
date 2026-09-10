@@ -1,0 +1,62 @@
+{# The share panel. Rendered alone into the modal on the workspace page and
+   inside links.html as a page of its own: one markup, two frames. #}
+<div class="card">
+    <form method="post" action="/app/d/{{ d.id }}/links" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <select name="mode">
+        <option value="ro">{{ t('mode_ro') }}</option>
+        <option value="rw">{{ t('mode_rw') }}</option>
+      </select>
+      <input type="text" name="label" placeholder="{{ t('link_label') }}" style="flex:1;min-width:160px">
+      <input type="text" name="days" placeholder="{{ t('expires') }} ({{ t('days') }})" style="width:150px">
+      <button class="btn btn-primary" type="submit">{{ t('new_link') }}</button>
+    </form>
+  </div>
+
+  <div class="card table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>{{ t('link_label') }}</th>
+          <th>{{ t('share') }}</th>
+          <th>{{ t('expires') }}</th>
+          <th>{{ t('last_used') }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for s in links %}
+        <tr>
+          <td>
+            <div>{{ s.label or '—' }}</div>
+            {% if s.is_live(now) %}
+            <div class="linkbox" style="margin-top:6px">
+              <input type="text" readonly value="{{ base_url }}/s/{{ s.token }}"
+                     onclick="this.select()" aria-label="{{ t('copy_link') }}">
+            </div>
+            {% endif %}
+          </td>
+          <td>{{ s.mode == 'rw' and t('mode_rw') or t('mode_ro') }}</td>
+          <td>{{ s.expires_at and fmt(s.expires_at) or t('never') }}</td>
+          <td>
+            {# The field that makes managing links real rather than nominal:
+               without it, six months in there is a list and no way to know
+               which of them anyone still uses. #}
+            {{ s.last_used_at and fmt(s.last_used_at) or t('never_used') }}
+            {% if s.use_count %}<span class="muted"> · {{ s.use_count }}</span>{% endif %}
+          </td>
+          <td style="text-align:right">
+            {% if s.revoked_at %}
+              <span class="badge">{{ t('revoked') }}</span>
+            {% else %}
+              <form method="post" action="/app/d/{{ d.id }}/links/{{ s.id }}/revoke" style="display:inline">
+                <button class="btn btn-small btn-danger" type="submit">{{ t('revoke') }}</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="muted">—</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>

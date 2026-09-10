@@ -641,3 +641,71 @@ def test_the_retention_pass_is_wired_to_the_app_starting(monkeypatch):
             time.sleep(0.05)
 
     assert ran, "no retention pass ran in the five seconds after startup"
+
+
+def test_the_pass_hands_free_pages_back_to_the_filesystem(client):
+    """Thinning frees rows; SQLite frees bytes only when asked.
+
+    Deleted rows leave free pages on a freelist inside the file, reused by later
+    writes but never returned — so a review that bins a large diagram keeps the
+    file at its high water mark for ever. The switch to incremental auto-vacuum
+    is what makes the pass able to hand them back.
+
+    Two things here were measured rather than assumed, and both are the reason
+    this test exists. `PRAGMA incremental_vacuum` does its work as the statement
+    is stepped and returns no rows, so through SQLAlchemy's result — closed
+    before it is stepped — it frees exactly one page whatever number you ask
+    for. And the switch itself needs a full VACUUM, because `auto_vacuum` lives
+    in the file header.
+    """
+    import hashlib
+    import os as _os
+    import zlib
+
+    from sqlalchemy import text
+
+    from draw.server.models import Diagram, DiagramVersion, engine, utcnow
+
+    def freelist() -> int:
+        with engine.connect() as conn:
+            return conn.execute(text("PRAGMA freelist_count")).scalar() or 0
+
+    def pages() -> int:
+        with engine.connect() as conn:
+            return conn.execute(text("PRAGMA page_count")).scalar() or 0
+
+    storage.enable_incremental_vacuum()
+    with engine.connect() as conn:
+        assert conn.execute(text("PRAGMA auto_vacuum")).scalar() == 2
+    # Idempotent: every boot after the first must not rebuild the file again.
+    assert storage.enable_incremental_vacuum() is False
+
+    db = SessionLocal()
+    try:
+        me = db.query(User).filter(User.email == "t@example.org").first()
+        d = Diagram(owner_id=me.id, title="Slack", xml=XML_A, size_bytes=len(XML_A))
+        db.add(d)
+        db.commit()
+
+        # Random bodies: identical ones would collide on the content hash, and
+        # compressible ones would not grow the file enough to measure.
+        for i in range(40):
+            body = _os.urandom(40_000)
+            db.add(DiagramVersion(
+                diagram_id=d.id, version_no=i + 1,
+                sha256=hashlib.sha256(body).hexdigest(),
+                xml_z=zlib.compress(body), size_bytes=len(body),
+                created_at=utcnow(), pinned=False, orphan=False))
+        db.commit()
+
+        fat = pages()
+        db.query(DiagramVersion).filter(DiagramVersion.diagram_id == d.id).delete()
+        db.commit()
+        assert freelist() > 0, "the deletes left no slack to reclaim"
+
+        freed = storage.reclaim(db)
+        assert freed > 0, "the pass reported freeing nothing"
+        assert pages() < fat, "the file did not shrink"
+        assert storage.reclaim(db) == 0, "a second pass on a clean file found work"
+    finally:
+        db.close()

@@ -23,8 +23,13 @@
         {% if st.held_by_other %}<span class="badge warn">{{ t('lock_other', who=st.label) }}</span>{% endif %}
         {% if share_counts[d.id] %}<span class="badge">{{ t('share') }} · {{ share_counts[d.id] }}</span>{% endif %}
         <span class="spacer" style="flex:1"></span>
-        <a class="btn btn-small" href="/app/d/{{ d.id }}/links">{{ t('share') }}</a>
-        <a class="btn btn-small" href="/app/d/{{ d.id }}/versions">{{ t('versions') }}</a>
+        {# Still links, and that is the point: with scripting off they go to the
+           page, and the page is what a modal would have to reinvent. The
+           handler below turns a click into a fetch of the same route. #}
+        <a class="btn btn-small" data-panel="{{ t('share_links') }}"
+           href="/app/d/{{ d.id }}/links">{{ t('share') }}</a>
+        <a class="btn btn-small" data-panel="{{ t('versions') }}"
+           href="/app/d/{{ d.id }}/versions">{{ t('versions') }}</a>
         {#
           Rename: the route has always existed and no page offered it, so the
           only way to rename a diagram was through a chat client. A prompt
@@ -68,5 +73,64 @@
   </div>
   {% endif %}
 
+  <dialog class="modal" id="panel" aria-labelledby="panel-title">
+    <div class="modal-head">
+      <h2 id="panel-title"></h2>
+      <span class="spacer"></span>
+      <button class="modal-close" type="button" data-close aria-label="{{ t('close') }}">&#x2715;</button>
+    </div>
+    <div class="modal-body" id="panel-body"></div>
+  </dialog>
+
 </div>
+
+<script>
+(function () {
+  const dlg = document.getElementById("panel");
+  const body = document.getElementById("panel-body");
+  const title = document.getElementById("panel-title");
+  if (!dlg || typeof dlg.showModal !== "function") return;  // no dialog, keep the links
+
+  let current = null;   // the route this panel came from, for reloading after a write
+
+  async function load(url) {
+    const sep = url.includes("?") ? "&" : "?";
+    const res = await fetch(url + sep + "panel=1", { headers: { "X-Panel": "1" } });
+    if (!res.ok) { window.location.href = url; return false; }   // let the page explain
+    body.innerHTML = await res.text();
+    current = url;
+    return true;
+  }
+
+  document.addEventListener("click", async function (ev) {
+    const open = ev.target.closest("a[data-panel]");
+    if (open && !ev.metaKey && !ev.ctrlKey && !ev.shiftKey) {
+      ev.preventDefault();
+      title.textContent = open.dataset.panel;
+      if (await load(open.getAttribute("href"))) dlg.showModal();
+      return;
+    }
+    if (ev.target.closest("[data-close]")) dlg.close();
+  });
+
+  // Writes inside the panel — a new link, a revoke, a pin — post where they
+  // always posted and the panel is reloaded from the server afterwards. No
+  // second copy of what those routes do, and no optimistic guess about what
+  // they did.
+  body.addEventListener("submit", async function (ev) {
+    const form = ev.target;
+    if (!(form instanceof HTMLFormElement) || form.method.toLowerCase() !== "post") return;
+    ev.preventDefault();
+    const btn = form.querySelector("button[type=submit]");
+    if (btn) btn.disabled = true;
+    try {
+      const res = await fetch(form.action, { method: "POST", body: new FormData(form) });
+      if (!res.ok) { window.location.href = form.action; return; }
+      await load(current);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+})();
+</script>
 {% endblock %}

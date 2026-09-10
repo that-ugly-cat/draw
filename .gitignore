@@ -16,3 +16,6 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+
+# Local launch config for the browser preview, not part of the app.
+.claude/

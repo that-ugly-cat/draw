@@ -126,6 +126,11 @@ async def _retention_loop() -> None:
     And the loop survives its own failures — a retention pass that dies at
     three in the morning must not take the next one with it.
     """
+    # Once, before the first pass: the switch to incremental auto-vacuum needs a
+    # full VACUUM to rewrite the file header, so it happens off the event loop
+    # and while the database is still small. It is a no-op on every boot after
+    # the first.
+    await run_in_threadpool(storage.enable_incremental_vacuum)
     await asyncio.sleep(storage.FIRST_SWEEP_AFTER.total_seconds())
     while True:
         try:
@@ -569,6 +574,7 @@ def restore(
 def versions(
     diagram_id: int,
     request: Request,
+    panel: int = 0,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -580,7 +586,11 @@ def versions(
         .limit(200)
         .all()
     )
-    return render(request, "versions.html", {"user": user, "d": d, "versions": rows})
+    # `panel=1` answers with the body alone, for the modal on the workspace
+    # page. The full page stays: a link to it can be sent, and with scripting
+    # off the button on a tile still leads there.
+    name = "_versions_panel.html" if panel else "versions.html"
+    return render(request, name, {"user": user, "d": d, "versions": rows})
 
 
 @app.post("/app/d/{diagram_id}/versions/{version_id}/pin")
@@ -687,13 +697,14 @@ def revoke_key(
 def links(
     diagram_id: int,
     request: Request,
+    panel: int = 0,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     d = _owned(db, diagram_id, user)
     return render(
         request,
-        "links.html",
+        "_links_panel.html" if panel else "links.html",
         {
             "user": user,
             "d": d,

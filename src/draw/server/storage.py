@@ -20,11 +20,11 @@ import urllib.parse
 import zlib
 from datetime import datetime, timedelta
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .models import Diagram, DiagramVersion, utcnow
+from .models import Diagram, DiagramVersion, engine, utcnow
 
 log = logging.getLogger("draw.storage")
 
@@ -293,8 +293,8 @@ def sweep(db: Session, now: datetime | None = None) -> dict:
     for its duration. A row a concurrent pass already deleted is not an error
     worth stopping for.
 
-    Note for whoever reads the numbers: SQLite does not return the space on its
-    own. Thinning without a periodic `VACUUM` frees rows, not bytes.
+    The pass also returns the freed pages to the filesystem, incrementally: see
+    `reclaim` for why it is that and not a `VACUUM`.
     """
     if not _SWEEP_LOCK.acquire(blocking=False):
         log.info("retention: a pass is already running, skipping this one")
@@ -317,7 +317,86 @@ def sweep(db: Session, now: datetime | None = None) -> dict:
             db.rollback()
             log.exception("retention: purging the bin failed")
             purged = 0
+        freed = reclaim(db)
         return {"diagrams": len(ids), "thinned": thinned, "purged": purged,
-                "skipped": False}
+                "freed_pages": freed, "skipped": False}
     finally:
         _SWEEP_LOCK.release()
+
+
+# How many free pages to hand back per pass. Incremental vacuum moves the pages
+# it is asked for and stops, so the number is a budget for how long the database
+# is busy: 2000 pages is 8 MB at the 4 KB page size, more than a day of thinning
+# will ever free here, and small enough to be uninteresting if it ever is not.
+RECLAIM_PAGES = 2000
+
+
+def enable_incremental_vacuum() -> bool:
+    """Switch the database to incremental auto-vacuum, once, at startup.
+
+    SQLite never gives space back on its own: deleted rows leave free pages on a
+    freelist inside the file, reused by later writes. That is a ceiling, not a
+    leak — but a review that bins a large diagram keeps the file at its high
+    water mark for ever.
+
+    `auto_vacuum` lives in the file header, so switching it on an existing
+    database takes one full `VACUUM` — which rebuilds the file under an
+    exclusive lock. That is the reason to do it now and not later: the cost
+    scales with the file, and this one is under a megabyte. After it, each pass
+    hands pages back with `PRAGMA incremental_vacuum`, which moves a bounded
+    number of them and takes no exclusive rebuild.
+
+    Returns True when it did the switch. A failure is logged and swallowed: a
+    disk too full for the rebuild is a reason to keep serving, not to refuse to
+    start.
+    """
+    with engine.connect() as conn:
+        conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+        mode = conn.execute(text("PRAGMA auto_vacuum")).scalar()
+        if mode == 2:
+            return False
+        try:
+            conn.execute(text("PRAGMA auto_vacuum=INCREMENTAL"))
+            conn.execute(text("VACUUM"))  # cannot run inside a transaction
+        except Exception:
+            log.exception("retention: could not switch on incremental auto-vacuum")
+            return False
+        now_mode = conn.execute(text("PRAGMA auto_vacuum")).scalar()
+        log.info("retention: incremental auto-vacuum on (auto_vacuum=%s)", now_mode)
+        return now_mode == 2
+
+
+def reclaim(db: Session) -> int:
+    """Hand free pages back to the filesystem. Returns how many were freed.
+
+    Zero is the ordinary answer: it means the file had no slack, not that
+    something failed. Zero is also what comes back if the one-time switch never
+    happened, because without incremental auto-vacuum the pragma is a no-op —
+    and that is the honest failure mode, since the alternative would be a full
+    VACUUM under an exclusive lock decided by a background task nobody watched.
+    """
+    try:
+        with engine.connect() as conn:
+            conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+            # Through the driver's own cursor, and stepped to the end. Both
+            # halves are load-bearing, and both were measured rather than
+            # assumed: incremental_vacuum does its work as the statement is
+            # stepped, and it returns no rows — so SQLAlchemy closes the result
+            # before stepping it and the pragma frees exactly one page (1 of
+            # 3000 in the probe), while execute + fetchall on the sqlite3
+            # cursor frees the number asked for.
+            raw = conn.connection.dbapi_connection
+            cur = raw.cursor()
+            try:
+                before = cur.execute("PRAGMA freelist_count").fetchone()[0] or 0
+                if not before:
+                    return 0
+                cur.execute(f"PRAGMA incremental_vacuum({RECLAIM_PAGES})")
+                cur.fetchall()
+                after = cur.execute("PRAGMA freelist_count").fetchone()[0] or 0
+            finally:
+                cur.close()
+        return max(0, before - after)
+    except Exception:
+        log.exception("retention: reclaiming free pages failed")
+        return 0
